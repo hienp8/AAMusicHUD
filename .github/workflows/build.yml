@@ -21,11 +21,8 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --console=plain 2>&1 | tee build.log
-
-      - name: Show errors
-        if: failure()
-        run: grep -E "^e: |What went wrong|error:" -A4 build.log | head -80
+        run: gradle assembleDebug --no-daemon 
+    
 
       - uses: actions/upload-artifact@v4
         with:
