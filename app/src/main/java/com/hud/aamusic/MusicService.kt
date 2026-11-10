@@ -3,14 +3,12 @@ package com.hud.aamusic
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
-import android.provider.MediaStore
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.MediaDescriptionCompat
 import android.support.v4.media.MediaMetadataCompat
@@ -19,21 +17,13 @@ import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.content.ContextCompat
 import androidx.media.MediaBrowserServiceCompat
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 
 class MusicService : MediaBrowserServiceCompat() {
 
-    private data class Song(val id: String, val title: String, val artist: String, val uri: Uri)
-
     private lateinit var session: MediaSessionCompat
-    private lateinit var player: ExoPlayer
     private lateinit var traffic: TrafficMonitor
     private lateinit var speaker: Speaker
-
-    private val songs = mutableListOf<Song>()
-    private val streams = mutableListOf<Song>()
 
     private var speedKmh = 0
     private var limit: Int? = null
@@ -41,9 +31,19 @@ class MusicService : MediaBrowserServiceCompat() {
     private var lastKey = ""
     private var lastPush = 0L
 
+    private val player get() = Engine.player
+
+    private val listener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) { updateState() }
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            updateState()
+            if (playWhenReady) startFg()
+        }
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { pushMeta(true) }
+    }
+
     override fun onCreate() {
         super.onCreate()
-        player = ExoPlayer.Builder(this).build()
         session = MediaSessionCompat(this, "AAMusicHud").apply {
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() { player.play() }
@@ -52,17 +52,12 @@ class MusicService : MediaBrowserServiceCompat() {
                 override fun onSkipToNext() { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }
                 override fun onSkipToPrevious() { player.seekToPreviousMediaItem() }
                 override fun onSeekTo(pos: Long) { player.seekTo(pos) }
-                override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) { playId(mediaId) }
+                override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) { Engine.playById(mediaId) }
             })
             isActive = true
         }
         sessionToken = session.sessionToken
-
-        player.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) { updateState() }
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { updateState() }
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { pushMeta(true) }
-        })
+        player.addListener(listener)
 
         speaker = Speaker(this)
         traffic = TrafficMonitor(
@@ -78,6 +73,8 @@ class MusicService : MediaBrowserServiceCompat() {
                 if (getSharedPreferences("aa", MODE_PRIVATE).getBoolean("tts", true)) speaker.speak(text)
             }
         )
+        traffic.start()
+        Diag.service = "Dịch vụ: đang chạy"
         updateState()
         pushMeta(true)
     }
@@ -95,11 +92,19 @@ class MusicService : MediaBrowserServiceCompat() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("AA Music HUD đang chạy")
             .build()
+        if (Build.VERSION.SDK_INT < 29) {
+            startForeground(1, n)
+            return
+        }
         var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
             == PackageManager.PERMISSION_GRANTED
         ) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        startForeground(1, n, type)
+        try {
+            startForeground(1, n, type)
+        } catch (e: Exception) {
+            try { startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK) } catch (e2: Exception) { }
+        }
     }
 
     // ---------- Duyệt thư viện trên Android Auto ----------
@@ -108,13 +113,20 @@ class MusicService : MediaBrowserServiceCompat() {
 
     override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
         val out = mutableListOf<MediaBrowserCompat.MediaItem>()
-        when (parentId) {
-            "root" -> {
-                out += folder("local", "Nhạc trong máy")
+        when {
+            parentId == "root" -> {
+                out += folder("local", "Bài hát")
+                out += folder("albums", "Album")
                 out += folder("online", "Radio online")
             }
-            "local" -> { loadSongs(); songs.take(300).forEach { out += playable(it) } }
-            "online" -> { loadStreams(); streams.forEach { out += playable(it) } }
+            parentId == "local" -> Engine.ensureLoaded().take(300).forEach { out += playable(it) }
+            parentId == "albums" -> Engine.ensureLoaded().map { Engine.album(it) }.distinct().sorted()
+                .take(200).forEach { out += folder("album:$it", it) }
+            parentId.startsWith("album:") -> {
+                val a = parentId.removePrefix("album:")
+                Engine.ensureLoaded().filter { Engine.album(it) == a }.take(200).forEach { out += playable(it) }
+            }
+            parentId == "online" -> Engine.streams().forEach { out += playable(it) }
         }
         result.sendResult(out)
     }
@@ -125,62 +137,12 @@ class MusicService : MediaBrowserServiceCompat() {
     )
 
     private fun playable(s: Song) = MediaBrowserCompat.MediaItem(
-        MediaDescriptionCompat.Builder().setMediaId(s.id).setTitle(s.title)
-            .setSubtitle(s.artist).setMediaUri(s.uri).build(),
+        MediaDescriptionCompat.Builder().setMediaId(s.id).setTitle(Engine.title(s))
+            .setSubtitle(Engine.artist(s)).setMediaUri(s.uri).build(),
         MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
     )
 
-    private fun loadSongs() {
-        songs.clear()
-        val media = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val proj = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST)
-        try {
-            contentResolver.query(
-                media, proj, "${MediaStore.Audio.Media.IS_MUSIC}!=0", null,
-                "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE"
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val id = c.getLong(0)
-                    songs += Song("L:$id", c.getString(1) ?: "?", c.getString(2) ?: "",
-                        ContentUris.withAppendedId(media, id))
-                }
-            }
-        } catch (e: SecurityException) {
-        }
-    }
-
-    private fun loadStreams() {
-        streams.clear()
-        val text = getSharedPreferences("aa", MODE_PRIVATE).getString("streams", "") ?: ""
-        text.lines().forEachIndexed { i, line ->
-            val parts = line.split("|", limit = 2)
-            if (parts.size == 2 && parts[1].isNotBlank())
-                streams += Song("R:$i", parts[0].trim(), "Radio", Uri.parse(parts[1].trim()))
-        }
-    }
-
-    // ---------- Phát nhạc ----------
-
-    private fun item(s: Song) = MediaItem.Builder()
-        .setUri(s.uri)
-        .setMediaId(s.id)
-        .setMediaMetadata(MediaMetadata.Builder().setTitle(s.title).setArtist(s.artist).build())
-        .build()
-
-    private fun playId(id: String) {
-        if (id.startsWith("L:")) {
-            if (songs.isEmpty()) loadSongs()
-            val idx = songs.indexOfFirst { it.id == id }
-            if (idx < 0) return
-            player.setMediaItems(songs.map { item(it) }, idx, 0L)
-        } else {
-            if (streams.isEmpty()) loadStreams()
-            val s = streams.firstOrNull { it.id == id } ?: return
-            player.setMediaItem(item(s))
-        }
-        player.prepare()
-        player.play()
-    }
+    // ---------- Trạng thái và thẻ media ----------
 
     private fun updateState() {
         val st = when (player.playbackState) {
@@ -202,18 +164,13 @@ class MusicService : MediaBrowserServiceCompat() {
         )
     }
 
-    /**
-     * Thẻ media trên Android Auto:
-     *  - tiêu đề  = tên bài hát
-     *  - dòng phụ = cảnh báo giao thông (nếu có), nếu không thì tên ca sĩ
-     *  - ảnh bìa  = biển giới hạn tốc độ + tốc độ hiện tại
-     */
     private fun pushMeta(force: Boolean) {
         val now = SystemClock.elapsedRealtime()
         if (!force && now - lastPush < 3000L) return
-        val cur = player.currentMediaItem?.mediaMetadata
-        val title = cur?.title?.toString() ?: "AA Music HUD"
-        val artist = if (alert.isNotEmpty()) "⚠ $alert" else (cur?.artist?.toString() ?: "")
+        val s = Engine.current
+        val title = s?.let { Engine.title(it) } ?: "AA Music HUD"
+        val base = s?.let { Engine.artist(it) } ?: ""
+        val artist = if (alert.isNotEmpty()) "⚠ $alert" else base
         val rounded = (speedKmh / 2) * 2
         val key = "$title|$artist|$rounded|$limit"
         if (key == lastKey) return
@@ -230,10 +187,11 @@ class MusicService : MediaBrowserServiceCompat() {
     }
 
     override fun onDestroy() {
+        Diag.service = "Dịch vụ: đã dừng"
+        player.removeListener(listener)
         traffic.stop()
         speaker.shutdown()
         session.release()
-        player.release()
         super.onDestroy()
     }
 }

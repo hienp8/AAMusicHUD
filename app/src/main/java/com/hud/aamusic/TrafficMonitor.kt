@@ -8,19 +8,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
  * Theo dõi GPS và gộp 2 nguồn dữ liệu:
- *  - dữ liệu CSV do bạn nhập (chạy offline, ưu tiên cao hơn)
- *  - OpenStreetMap qua Overpass (tuỳ chọn, bật/tắt trong app)
+ *  - CSV do bạn nhập (offline, ưu tiên cao hơn)
+ *  - OpenStreetMap qua Overpass (tuỳ chọn). Trạng thái từng bước được ghi vào [Diag].
  */
 class TrafficMonitor(
     private val ctx: Context,
@@ -31,14 +26,13 @@ class TrafficMonitor(
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private val store = PointStore(ctx)
+    private var started = false
 
-    // Dữ liệu CSV
     private var localAlerts = listOf<Pt>()
     private var localSigns = listOf<Pt>()
     private var storeStamp = -1L
     private var storeCheck = 0L
 
-    // Dữ liệu OSM
     private var osmCams = listOf<Pt>()
     private var camCenter: Location? = null
     private var camBusy = false
@@ -47,7 +41,6 @@ class TrafficMonitor(
     private var limTime = 0L
     private var limBusy = false
 
-    // Giới hạn đọc từ biển trong CSV
     private var signLimit: Int? = null
     private var signAt = 0L
 
@@ -58,20 +51,25 @@ class TrafficMonitor(
         override fun onLocationChanged(loc: Location) = handle(loc)
         @Deprecated("Deprecated in Java")
         override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
-        override fun onProviderEnabled(p: String) {}
-        override fun onProviderDisabled(p: String) {}
+        override fun onProviderEnabled(p: String) { Diag.gps = "GPS: đang chờ tín hiệu..." }
+        override fun onProviderDisabled(p: String) { Diag.gps = "GPS: đang TẮT trong cài đặt máy" }
     }
 
     fun start() {
+        if (started) return
         try {
+            Diag.gps = "GPS: đang chờ tín hiệu (hãy ra nơi thoáng)..."
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener, Looper.getMainLooper())
+            started = true
         } catch (e: SecurityException) {
+            Diag.gps = "GPS: chưa được cấp quyền vị trí"
         }
     }
 
     fun stop() {
         lm.removeUpdates(listener)
         io.shutdownNow()
+        started = false
     }
 
     private fun online() = ctx.getSharedPreferences("aa", Context.MODE_PRIVATE).getBoolean("online", true)
@@ -101,6 +99,7 @@ class TrafficMonitor(
     private fun handle(loc: Location) {
         val kmh = (loc.speed * 3.6f).roundToInt()
         val now = SystemClock.elapsedRealtime()
+        Diag.gps = "GPS: $kmh km/h, sai số ${if (loc.hasAccuracy()) loc.accuracy.roundToInt() else -1} m"
         refreshStore(now)
 
         if (online()) {
@@ -110,7 +109,6 @@ class TrafficMonitor(
             if (ll == null || loc.distanceTo(ll) > 120f || now - limTime > 30000L) fetchLimit(loc)
         }
 
-        // 1) Biển giới hạn trong CSV: đi qua trong ~35 m thì áp dụng giới hạn đó 5 phút
         val r = FloatArray(1)
         for (s in localSigns) {
             if (s.limit == null || !near(loc, s)) continue
@@ -121,7 +119,6 @@ class TrafficMonitor(
             }
         }
 
-        // 2) Điểm cảnh báo gần nhất phía trước (camera 800 m, cảnh báo khác 500 m)
         var best = Float.MAX_VALUE
         var bestPt: Pt? = null
         fun consider(p: Pt) {
@@ -153,7 +150,6 @@ class TrafficMonitor(
             if (spoken.size > 300) spoken.clear()
         }
 
-        // 3) Giới hạn tốc độ hiện hành: biển CSV (còn mới) > OSM
         val fromSign = if (now - signAt < 300000L) signLimit else null
         val eff = fromSign ?: osmLimit
 
@@ -168,12 +164,15 @@ class TrafficMonitor(
         if (camBusy) return
         camBusy = true
         camCenter = Location(loc)
-        val q = "[out:json][timeout:10];node(around:3000,${loc.latitude},${loc.longitude})[\"highway\"=\"speed_camera\"];out;"
+        Diag.osmCam = "OSM camera: đang tải..."
+        val q = "[out:json][timeout:15];node(around:3000,${loc.latitude},${loc.longitude})[\"highway\"=\"speed_camera\"];out;"
         io.execute {
-            val arr = overpass(q)
+            val res = Overpass.query(q)
             main.post {
                 camBusy = false
+                val arr = res.elements
                 if (arr == null) {
+                    Diag.osmCam = "OSM camera: LỖI - ${res.log}"
                     main.postDelayed({ camCenter = null }, 30000L)
                 } else {
                     val list = mutableListOf<Pt>()
@@ -184,6 +183,7 @@ class TrafficMonitor(
                             parseSpeed(o.optJSONObject("tags")?.optString("maxspeed")), "")
                     }
                     osmCams = list
+                    Diag.osmCam = "OSM camera: OK (${res.log}), ${list.size} camera trong 3 km quanh bạn"
                 }
             }
         }
@@ -194,15 +194,20 @@ class TrafficMonitor(
         limBusy = true
         limLoc = Location(loc)
         limTime = SystemClock.elapsedRealtime()
-        val q = "[out:json][timeout:8];way(around:25,${loc.latitude},${loc.longitude})[\"maxspeed\"];out tags;"
+        val q = "[out:json][timeout:10];way(around:25,${loc.latitude},${loc.longitude})[\"maxspeed\"];out tags;"
         io.execute {
-            val arr = overpass(q)
+            val res = Overpass.query(q)
             main.post {
                 limBusy = false
-                if (arr != null) {
+                val arr = res.elements
+                if (arr == null) {
+                    Diag.osmLim = "OSM giới hạn đường: LỖI - ${res.log}"
+                } else {
                     osmLimit = if (arr.length() > 0)
                         parseSpeed(arr.getJSONObject(0).optJSONObject("tags")?.optString("maxspeed"))
                     else null
+                    Diag.osmLim = "OSM giới hạn đường: OK (${res.log}), " +
+                        (osmLimit?.let { "$it km/h" } ?: "đoạn đường này chưa có dữ liệu maxspeed")
                 }
             }
         }
@@ -210,17 +215,4 @@ class TrafficMonitor(
 
     private fun parseSpeed(s: String?): Int? =
         s?.let { Regex("\\d+").find(it)?.value?.toIntOrNull() }
-
-    private fun overpass(q: String): JSONArray? = try {
-        val c = URL("https://overpass-api.de/api/interpreter").openConnection() as HttpURLConnection
-        c.requestMethod = "POST"
-        c.doOutput = true
-        c.connectTimeout = 8000
-        c.readTimeout = 12000
-        c.setRequestProperty("User-Agent", "AAMusicHud/1.0")
-        c.outputStream.use { it.write("data=${URLEncoder.encode(q, "UTF-8")}".toByteArray()) }
-        JSONObject(c.inputStream.bufferedReader().readText()).getJSONArray("elements")
-    } catch (e: Exception) {
-        null
-    }
 }
