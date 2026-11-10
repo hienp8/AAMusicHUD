@@ -30,6 +30,7 @@ class MusicService : MediaBrowserServiceCompat() {
     private lateinit var session: MediaSessionCompat
     private lateinit var player: ExoPlayer
     private lateinit var traffic: TrafficMonitor
+    private lateinit var speaker: Speaker
 
     private val songs = mutableListOf<Song>()
     private val streams = mutableListOf<Song>()
@@ -63,13 +64,20 @@ class MusicService : MediaBrowserServiceCompat() {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { pushMeta(true) }
         })
 
-        traffic = TrafficMonitor(this) { s, l, a ->
-            val changed = (l != limit) || (a != alert)
-            speedKmh = s
-            limit = l
-            alert = a
-            pushMeta(changed)
-        }
+        speaker = Speaker(this)
+        traffic = TrafficMonitor(
+            this,
+            onUpdate = { s, l, a ->
+                val changed = (l != limit) || (a != alert)
+                speedKmh = s
+                limit = l
+                alert = a
+                pushMeta(changed)
+            },
+            onSpeak = { text ->
+                if (getSharedPreferences("aa", MODE_PRIVATE).getBoolean("tts", true)) speaker.speak(text)
+            }
+        )
         updateState()
         pushMeta(true)
     }
@@ -223,6 +231,7 @@ class MusicService : MediaBrowserServiceCompat() {
 
     override fun onDestroy() {
         traffic.stop()
+        speaker.shutdown()
         session.release()
         player.release()
         super.onDestroy()

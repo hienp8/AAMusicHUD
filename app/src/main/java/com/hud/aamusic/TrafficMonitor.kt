@@ -7,6 +7,7 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -17,28 +18,41 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Theo dõi GPS và tải liên tục dữ liệu giao thông từ OpenStreetMap (Overpass API):
- *  - camera tốc độ trong bán kính 3 km (tải lại khi di chuyển > 1,5 km)
- *  - giới hạn tốc độ (maxspeed) của đoạn đường hiện tại (tải lại mỗi 120 m / 30 s)
- * Muốn dùng nguồn khác (TomTom, HERE, API riêng...) thì thay hàm fetchCams/fetchLimit.
+ * Theo dõi GPS và gộp 2 nguồn dữ liệu:
+ *  - dữ liệu CSV do bạn nhập (chạy offline, ưu tiên cao hơn)
+ *  - OpenStreetMap qua Overpass (tuỳ chọn, bật/tắt trong app)
  */
 class TrafficMonitor(
-    ctx: Context,
-    private val onUpdate: (speedKmh: Int, limit: Int?, alert: String) -> Unit
+    private val ctx: Context,
+    private val onUpdate: (speedKmh: Int, limit: Int?, alert: String) -> Unit,
+    private val onSpeak: (String) -> Unit
 ) {
-    private data class Cam(val lat: Double, val lon: Double, val max: Int?)
-
     private val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
+    private val store = PointStore(ctx)
 
-    private var cams = listOf<Cam>()
+    // Dữ liệu CSV
+    private var localAlerts = listOf<Pt>()
+    private var localSigns = listOf<Pt>()
+    private var storeStamp = -1L
+    private var storeCheck = 0L
+
+    // Dữ liệu OSM
+    private var osmCams = listOf<Pt>()
     private var camCenter: Location? = null
     private var camBusy = false
-    private var limit: Int? = null
+    private var osmLimit: Int? = null
     private var limLoc: Location? = null
     private var limTime = 0L
     private var limBusy = false
+
+    // Giới hạn đọc từ biển trong CSV
+    private var signLimit: Int? = null
+    private var signAt = 0L
+
+    private val spoken = HashSet<String>()
+    private var lastOver = 0L
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(loc: Location) = handle(loc)
@@ -50,7 +64,7 @@ class TrafficMonitor(
 
     fun start() {
         try {
-            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 5f, listener, Looper.getMainLooper())
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener, Looper.getMainLooper())
         } catch (e: SecurityException) {
         }
     }
@@ -60,36 +74,94 @@ class TrafficMonitor(
         io.shutdownNow()
     }
 
+    private fun online() = ctx.getSharedPreferences("aa", Context.MODE_PRIVATE).getBoolean("online", true)
+
+    private fun refreshStore(now: Long) {
+        if (now - storeCheck < 20000L) return
+        storeCheck = now
+        val st = store.stamp()
+        if (st == storeStamp) return
+        storeStamp = st
+        io.execute {
+            val (a, s) = try { store.load() } catch (e: Exception) { Pair(emptyList<Pt>(), emptyList<Pt>()) }
+            main.post { localAlerts = a; localSigns = s }
+        }
+    }
+
+    private fun near(loc: Location, p: Pt) =
+        abs(p.lat - loc.latitude) < 0.01 && abs(p.lon - loc.longitude) < 0.012
+
+    private fun ahead(loc: Location, p: Pt, maxDiff: Float): Boolean {
+        if (!(loc.hasBearing() && loc.speed > 2f)) return true
+        val t = Location("pt").apply { latitude = p.lat; longitude = p.lon }
+        val d = ((loc.bearingTo(t) - loc.bearing + 540f) % 360f) - 180f
+        return abs(d) < maxDiff
+    }
+
     private fun handle(loc: Location) {
         val kmh = (loc.speed * 3.6f).roundToInt()
-        val now = System.currentTimeMillis()
-        val cc = camCenter
-        if (cc == null || loc.distanceTo(cc) > 1500f) fetchCams(loc)
-        val ll = limLoc
-        if (ll == null || loc.distanceTo(ll) > 120f || now - limTime > 30000L) fetchLimit(loc)
+        val now = SystemClock.elapsedRealtime()
+        refreshStore(now)
 
+        if (online()) {
+            val cc = camCenter
+            if (cc == null || loc.distanceTo(cc) > 1500f) fetchCams(loc)
+            val ll = limLoc
+            if (ll == null || loc.distanceTo(ll) > 120f || now - limTime > 30000L) fetchLimit(loc)
+        }
+
+        // 1) Biển giới hạn trong CSV: đi qua trong ~35 m thì áp dụng giới hạn đó 5 phút
+        val r = FloatArray(1)
+        for (s in localSigns) {
+            if (s.limit == null || !near(loc, s)) continue
+            Location.distanceBetween(loc.latitude, loc.longitude, s.lat, s.lon, r)
+            if (r[0] < 35f && ahead(loc, s, 100f)) {
+                signLimit = s.limit
+                signAt = now
+            }
+        }
+
+        // 2) Điểm cảnh báo gần nhất phía trước (camera 800 m, cảnh báo khác 500 m)
         var best = Float.MAX_VALUE
-        var bestCam: Cam? = null
-        for (c in cams) {
-            val r = FloatArray(1)
-            Location.distanceBetween(loc.latitude, loc.longitude, c.lat, c.lon, r)
-            var ahead = true
-            if (loc.hasBearing() && loc.speed > 2f) {
-                val t = Location("cam").apply { latitude = c.lat; longitude = c.lon }
-                val d = ((loc.bearingTo(t) - loc.bearing + 540f) % 360f) - 180f
-                ahead = abs(d) < 60f
-            }
-            if (ahead && r[0] < best) {
+        var bestPt: Pt? = null
+        fun consider(p: Pt) {
+            if (!near(loc, p)) return
+            Location.distanceBetween(loc.latitude, loc.longitude, p.lat, p.lon, r)
+            val thr = if (p.type == Pt.WARN) 500f else 800f
+            if (r[0] < thr && r[0] < best && ahead(loc, p, 60f)) {
                 best = r[0]
-                bestCam = c
+                bestPt = p
             }
         }
+        for (p in osmCams) consider(p)
+        for (p in localAlerts) consider(p)
+
         var alert = ""
-        if (bestCam != null && best < 800f) {
-            alert = "Camera tốc độ ${(best / 10f).roundToInt() * 10} m" +
-                (bestCam.max?.let { " - tối đa $it" } ?: "")
+        val pt = bestPt
+        if (pt != null) {
+            val m = (best / 10f).roundToInt() * 10
+            val isWarn = pt.type == Pt.WARN
+            val label = if (isWarn) pt.name.ifEmpty { "Cảnh báo" } else "Camera tốc độ"
+            alert = "$label $m m" + (pt.limit?.let { " - tối đa $it" } ?: "")
+            val key = "${pt.lat},${pt.lon}"
+            if (best < 300f) {
+                if (spoken.add("$key:300"))
+                    onSpeak(if (isWarn) "Sắp tới $label" else "Sắp tới camera tốc độ" + (pt.limit?.let { ", giới hạn $it" } ?: ""))
+            } else if (spoken.add("$key:far")) {
+                onSpeak(if (isWarn) "Phía trước khoảng $m mét: $label" else "Phía trước khoảng $m mét có camera tốc độ")
+            }
+            if (spoken.size > 300) spoken.clear()
         }
-        onUpdate(kmh, limit, alert)
+
+        // 3) Giới hạn tốc độ hiện hành: biển CSV (còn mới) > OSM
+        val fromSign = if (now - signAt < 300000L) signLimit else null
+        val eff = fromSign ?: osmLimit
+
+        if (eff != null && kmh > eff + 3 && now - lastOver > 30000L) {
+            lastOver = now
+            onSpeak("Bạn đang chạy quá tốc độ, giới hạn $eff")
+        }
+        onUpdate(kmh, eff, alert)
     }
 
     private fun fetchCams(loc: Location) {
@@ -102,16 +174,16 @@ class TrafficMonitor(
             main.post {
                 camBusy = false
                 if (arr == null) {
-                    main.postDelayed({ camCenter = null }, 30000L) // thử lại sau 30 s
+                    main.postDelayed({ camCenter = null }, 30000L)
                 } else {
-                    val list = mutableListOf<Cam>()
+                    val list = mutableListOf<Pt>()
                     for (i in 0 until arr.length()) {
                         val o = arr.getJSONObject(i)
                         if (o.optString("type") != "node") continue
-                        list += Cam(o.getDouble("lat"), o.getDouble("lon"),
-                            parseSpeed(o.optJSONObject("tags")?.optString("maxspeed")))
+                        list += Pt(o.getDouble("lat"), o.getDouble("lon"), Pt.CAM,
+                            parseSpeed(o.optJSONObject("tags")?.optString("maxspeed")), "")
                     }
-                    cams = list
+                    osmCams = list
                 }
             }
         }
@@ -121,14 +193,14 @@ class TrafficMonitor(
         if (limBusy) return
         limBusy = true
         limLoc = Location(loc)
-        limTime = System.currentTimeMillis()
+        limTime = SystemClock.elapsedRealtime()
         val q = "[out:json][timeout:8];way(around:25,${loc.latitude},${loc.longitude})[\"maxspeed\"];out tags;"
         io.execute {
             val arr = overpass(q)
             main.post {
                 limBusy = false
                 if (arr != null) {
-                    limit = if (arr.length() > 0)
+                    osmLimit = if (arr.length() > 0)
                         parseSpeed(arr.getJSONObject(0).optJSONObject("tags")?.optString("maxspeed"))
                     else null
                 }
