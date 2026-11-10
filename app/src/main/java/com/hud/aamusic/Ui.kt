@@ -32,10 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -186,10 +182,10 @@ fun MiniPlayer(onOpen: () -> Unit) {
             Text(Engine.artist(s), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp)
         }
         IconButton(onClick = { Engine.togglePlay() }) {
-            Icon(if (Engine.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null)
+            Text(if (Engine.isPlaying) "⏸" else "▶", fontSize = 20.sp)
         }
         IconButton(onClick = { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }) {
-            Icon(Icons.Filled.SkipNext, null)
+            Text("⏭", fontSize = 20.sp)
         }
     }
 }
@@ -348,19 +344,16 @@ fun NowPlayingScreen() {
                 Text("🔀", fontSize = 22.sp, color = if (Engine.shuffle) Accent else Dim)
             }
             IconButton(onClick = { Engine.player.seekToPreviousMediaItem() }, modifier = Modifier.size(56.dp)) {
-                Icon(Icons.Filled.SkipPrevious, null, Modifier.size(36.dp))
+                Text("⏮", fontSize = 28.sp)
             }
             Box(
                 Modifier.size(72.dp).clip(CircleShape).background(Accent).clickable { Engine.togglePlay() },
                 Alignment.Center
             ) {
-                Icon(
-                    if (Engine.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null,
-                    Modifier.size(44.dp), tint = Color.Black
-                )
+                Text(if (Engine.isPlaying) "⏸" else "▶", fontSize = 32.sp, color = Color.Black)
             }
             IconButton(onClick = { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }, modifier = Modifier.size(56.dp)) {
-                Icon(Icons.Filled.SkipNext, null, Modifier.size(36.dp))
+                Text("⏭", fontSize = 28.sp)
             }
             TextButton(onClick = { Engine.cycleRepeat() }) {
                 Text(
