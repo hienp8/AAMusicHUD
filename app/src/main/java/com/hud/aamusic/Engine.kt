@@ -380,7 +380,7 @@ object Engine {
         prefs.edit().putString("eq_levels", bandLevels.joinToString(",")).apply()
     }
 
-    fun setEqEnabled(on: Boolean) {
+    fun changeEq(on: Boolean) {
         eqEnabled = on
         try { eq?.setEnabled(on) } catch (e: Exception) { }
         prefs.edit().putBoolean("eq_on", on).apply()

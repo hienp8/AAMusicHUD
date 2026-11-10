@@ -414,7 +414,7 @@ fun EqScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Equalizer", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Switch(checked = Engine.eqEnabled, onCheckedChange = { Engine.setEqEnabled(it) })
+            Switch(checked = Engine.eqEnabled, onCheckedChange = { Engine.changeEq(it) })
         }
         if (info == null) {
             Text("Hãy phát một bài hát để equalizer sẵn sàng.", color = Dim, modifier = Modifier.padding(vertical = 12.dp))
