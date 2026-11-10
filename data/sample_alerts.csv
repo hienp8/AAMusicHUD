@@ -1,0 +1,6 @@
+# Ví dụ định dạng - toạ độ giả, KHÔNG phải dữ liệu thật
+# vĩ độ, kinh độ, loại, giới hạn, tên
+21.00000,105.00000,camera,60,Camera ví dụ
+21.00100,105.00100,warn,,Cấm vượt
+21.00200,105.00200
+21.00300,105.00300,50
