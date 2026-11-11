@@ -1,15 +1,19 @@
-# AA Music HUD (v2)
-Trình phát nhạc kiểu Poweramp / Sony Music, có:
-- Thư viện (bài hát, album, nghệ sĩ, radio), mini player, màn hình Đang phát
-- Lời bài hát đồng bộ theo thời gian thực (LRC, tải từ LRCLIB)
-- Tìm tên / album / ảnh bìa trên internet (iTunes Search) và chỉnh sửa thông tin (lưu trong app)
-- Equalizer + Bass booster
-- Hiển thị trên Android Auto (thẻ media: tên bài, tốc độ, giới hạn, cảnh báo camera), đọc cảnh báo bằng giọng nói
-- Dữ liệu cảnh báo: CSV offline (xem data/) + OpenStreetMap trực tuyến, có màn hình chẩn đoán trong Cài đặt
+# AA Music
+Trình phát nhạc hiện đại cho điện thoại và Android Auto.
 
-## Build bằng GitHub Actions
-`settings.gradle.kts` và `.github/workflows/build.yml` phải nằm ở thư mục GỐC repo.
-Tab Actions > "Build APK" > Run workflow > tải artifact `AAMusicHud-debug-apk`.
+- Thư viện, mini player, màn hình Đang phát (nền màu theo ảnh bìa), lời bài hát đồng bộ
+- Đọc / ghi tag ID3 (tên, nghệ sĩ, album, bìa, lời) trực tiếp trong file nhạc
+- Kiểm tra toàn bộ thư viện, đề xuất bổ sung tag từ internet
+- Equalizer dọc + Bass booster, thoát hoàn toàn
+- Cảnh báo camera / giới hạn tốc độ trên thẻ media của Android Auto, đọc bằng giọng nói
 
-## Android Auto không cần AA XLauncher
-Android Auto > chạm 10 lần vào Phiên bản > menu ⋮ > Cài đặt dành cho nhà phát triển > bật "Nguồn không xác định".
+## Build (GitHub Actions)
+`settings.gradle.kts`, `app/`, `.github/` phải ở thư mục GỐC repo. Tab Actions > "Build AA Music" > Run workflow,
+tải artifact `AA-Music` (file `AA Music.apk`).
+
+## Dữ liệu cảnh báo
+Chạy workflow "Update traffic data" một lần để tạo `data/vn_cameras.csv` và `data/vn_signs.csv`
+(lấy từ OpenStreetMap). App tự tải hai file này mỗi ngày.
+
+## Cập nhật đè không báo "không tương thích"
+Mọi bản build dùng chung khoá ký `app/aamusic.keystore` và versionCode tăng theo số lần build.

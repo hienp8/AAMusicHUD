@@ -1,4 +1,10 @@
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
 rootProject.name = "AAMusicHud"
 include(":app")
