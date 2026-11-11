@@ -67,6 +67,7 @@ data class Proposal(
 object Diag {
     var service by mutableStateOf("Dịch vụ: chưa chạy")
     var gps by mutableStateOf("GPS: chưa có tín hiệu")
+    var aa by mutableStateOf("Android Auto: chưa kiểm tra")
     var osmCam by mutableStateOf("OSM camera: chưa tải")
     var osmLim by mutableStateOf("OSM giới hạn đường: chưa tải")
     var test by mutableStateOf("")

@@ -188,6 +188,7 @@ fun SettingsScreen() {
     val store = remember { PointStore(ctx) }
     var tts by remember { mutableStateOf(prefs.getBoolean("tts", true)) }
     var online by remember { mutableStateOf(prefs.getBoolean("online", true)) }
+    var locAlways by remember { mutableStateOf(prefs.getInt("loc_mode", 0) == 1) }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
     var urlA by remember { mutableStateOf(DataSync.urlAlerts()) }
     var urlS by remember { mutableStateOf(DataSync.urlSigns()) }
@@ -234,6 +235,7 @@ fun SettingsScreen() {
 
         Section("Cảnh báo giao thông") {
             Text(Diag.service, fontSize = 13.sp, color = Dim)
+            Text(Diag.aa, fontSize = 13.sp, color = Dim)
             Text(Diag.gps, fontSize = 13.sp, color = Dim)
             Text(Diag.osmCam, fontSize = 13.sp, color = Dim)
             Text(Diag.osmLim, fontSize = 13.sp, color = Dim)
@@ -252,6 +254,11 @@ fun SettingsScreen() {
                 Checkbox(checked = online, onCheckedChange = { online = it; prefs.edit().putBoolean("online", it).apply() })
                 Text("Tải thêm dữ liệu OpenStreetMap trực tuyến")
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = locAlways, onCheckedChange = { locAlways = it; prefs.edit().putInt("loc_mode", if (it) 1 else 0).apply() })
+                Text("Luôn dùng GPS (tốn pin, chỉ để thử khi chưa nối xe)", fontSize = 14.sp)
+            }
+            Text("Mặc định GPS chỉ chạy khi điện thoại đang kết nối Android Auto.", fontSize = 12.sp, color = Dim)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 GradBtn("Bật dịch vụ") { ctx.startServiceSafe() }
                 SoftBtn("Dừng dịch vụ") {

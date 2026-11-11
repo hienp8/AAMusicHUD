@@ -2,6 +2,31 @@ package com.hud.aamusic
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -105,10 +130,19 @@ fun AppTheme(content: @Composable () -> Unit) {
     )
 }
 
+/** Hiệu ứng nhấn: nút co lại rồi nảy về (spring). */
+fun Modifier.pressable(onClick: () -> Unit): Modifier = composed {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(if (pressed) 0.90f else 1f, spring(dampingRatio = 0.45f, stiffness = 600f), label = "press")
+    this.graphicsLayer { scaleX = sc; scaleY = sc }
+        .clickable(interactionSource = src, indication = null, onClick = onClick)
+}
+
 @Composable
 fun GradBtn(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        modifier.clip(RoundedCornerShape(24.dp)).background(AccentBrush).clickable { onClick() }
+        modifier.pressable(onClick).clip(RoundedCornerShape(24.dp)).background(AccentBrush)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) { Text(text, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
@@ -117,7 +151,7 @@ fun GradBtn(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
 @Composable
 fun SoftBtn(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        modifier.clip(RoundedCornerShape(24.dp)).background(Card2).clickable { onClick() }
+        modifier.pressable(onClick).clip(RoundedCornerShape(24.dp)).background(Card2)
             .padding(horizontal = 16.dp, vertical = 11.dp),
         contentAlignment = Alignment.Center
     ) { Text(text, fontSize = 13.sp) }
@@ -126,12 +160,158 @@ fun SoftBtn(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
 @Composable
 fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(
-        Modifier.clip(RoundedCornerShape(20.dp))
+        Modifier.pressable(onClick).clip(RoundedCornerShape(20.dp))
             .background(if (selected) AccentA else Card2)
-            .clickable { onClick() }.padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(text, fontSize = 13.sp, color = if (selected) Color.Black else Color.White, fontWeight = FontWeight.Medium)
+    }
+}
+
+// ------------------------------------------------------------------ Biểu tượng vẽ tay (phong cách hình học)
+
+@Composable
+fun IconPlay(color: Color, dp: Dp) {
+    Canvas(Modifier.size(dp)) {
+        val w = size.width
+        val h = size.height
+        val p = Path().apply {
+            moveTo(w * 0.30f, h * 0.16f); lineTo(w * 0.30f, h * 0.84f); lineTo(w * 0.86f, h * 0.50f); close()
+        }
+        drawPath(p, color)
+    }
+}
+
+@Composable
+fun IconPause(color: Color, dp: Dp) {
+    Canvas(Modifier.size(dp)) {
+        val w = size.width
+        val h = size.height
+        val r = CornerRadius(w * 0.05f, w * 0.05f)
+        drawRoundRect(color, Offset(w * 0.24f, h * 0.18f), Size(w * 0.18f, h * 0.64f), r)
+        drawRoundRect(color, Offset(w * 0.58f, h * 0.18f), Size(w * 0.18f, h * 0.64f), r)
+    }
+}
+
+@Composable
+fun IconSkip(next: Boolean, color: Color, dp: Dp) {
+    Canvas(Modifier.size(dp)) {
+        val w = size.width
+        val h = size.height
+        val p = Path().apply {
+            if (next) {
+                moveTo(w * 0.20f, h * 0.20f); lineTo(w * 0.20f, h * 0.80f); lineTo(w * 0.66f, h * 0.50f)
+            } else {
+                moveTo(w * 0.80f, h * 0.20f); lineTo(w * 0.80f, h * 0.80f); lineTo(w * 0.34f, h * 0.50f)
+            }
+            close()
+        }
+        drawPath(p, color)
+        val barLeft = if (next) w * 0.72f else w * 0.18f
+        drawRoundRect(color, Offset(barLeft, h * 0.20f), Size(w * 0.10f, h * 0.60f), CornerRadius(w * 0.03f, w * 0.03f))
+    }
+}
+
+@Composable
+fun IconShuffle(color: Color, dp: Dp) {
+    Canvas(Modifier.size(dp)) {
+        val w = size.width
+        val h = size.height
+        val st = Stroke(width = w * 0.085f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val a = Path().apply {
+            moveTo(w * 0.10f, h * 0.30f); lineTo(w * 0.36f, h * 0.30f); lineTo(w * 0.62f, h * 0.70f); lineTo(w * 0.78f, h * 0.70f)
+        }
+        val b = Path().apply {
+            moveTo(w * 0.10f, h * 0.70f); lineTo(w * 0.36f, h * 0.70f); lineTo(w * 0.62f, h * 0.30f); lineTo(w * 0.78f, h * 0.30f)
+        }
+        drawPath(a, color, style = st)
+        drawPath(b, color, style = st)
+        val ha = Path().apply { moveTo(w * 0.78f, h * 0.58f); lineTo(w * 0.78f, h * 0.82f); lineTo(w * 0.94f, h * 0.70f); close() }
+        val hb = Path().apply { moveTo(w * 0.78f, h * 0.18f); lineTo(w * 0.78f, h * 0.42f); lineTo(w * 0.94f, h * 0.30f); close() }
+        drawPath(ha, color)
+        drawPath(hb, color)
+    }
+}
+
+@Composable
+fun IconRepeat(color: Color, dp: Dp) {
+    Canvas(Modifier.size(dp)) {
+        val w = size.width
+        val h = size.height
+        drawRoundRect(
+            color, Offset(w * 0.12f, h * 0.28f), Size(w * 0.76f, h * 0.46f),
+            CornerRadius(w * 0.18f, w * 0.18f), style = Stroke(width = w * 0.085f, cap = StrokeCap.Round)
+        )
+        val head = Path().apply { moveTo(w * 0.58f, h * 0.08f); lineTo(w * 0.58f, h * 0.48f); lineTo(w * 0.80f, h * 0.28f); close() }
+        drawPath(head, color)
+    }
+}
+
+// ------------------------------------------------------------------ Nút phong cách tương lai
+
+/** Nút tròn kính tối, viền neon; phát sáng khi bật hoặc đang nhấn, co nảy khi nhấn, rung nhẹ. */
+@Composable
+fun NeonButton(dp: Dp, active: Boolean, onClick: () -> Unit, content: @Composable BoxScope.() -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val haptic = LocalHapticFeedback.current
+    val scale by animateFloatAsState(if (pressed) 0.84f else 1f, spring(dampingRatio = 0.4f, stiffness = 500f), label = "neonScale")
+    val glow by animateFloatAsState(if (active || pressed) 1f else 0f, tween(250), label = "neonGlow")
+    val ringBrush: Brush = if (active) {
+        Brush.sweepGradient(listOf(AccentA, AccentB, Color(0xFF7C4DFF), AccentA))
+    } else {
+        Brush.linearGradient(listOf(Color(0xFF3A4254), Color(0xFF2A303C)))
+    }
+    Box(
+        Modifier.size(dp).graphicsLayer { scaleX = scale; scaleY = scale }
+            .drawBehind {
+                drawCircle(AccentA.copy(alpha = 0.30f * glow), radius = size.minDimension / 2f + 7.dp.toPx() * glow)
+            }
+            .clip(CircleShape)
+            .background(Brush.radialGradient(listOf(Color(0xFF2B3345), Color(0xFF141925))))
+            .border(1.6.dp, ringBrush, CircleShape)
+            .clickable(interactionSource = src, indication = null) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            },
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
+/** Nút phát/tạm dừng: vòng neon quay và nhịp sáng khi đang phát. */
+@Composable
+fun PlayOrb(playing: Boolean, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val haptic = LocalHapticFeedback.current
+    val scale by animateFloatAsState(if (pressed) 0.88f else 1f, spring(dampingRatio = 0.4f, stiffness = 450f), label = "orbScale")
+    val inf = rememberInfiniteTransition(label = "orbInf")
+    val angle by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(3500, easing = LinearEasing), RepeatMode.Restart), label = "orbAngle")
+    val pulse by inf.animateFloat(0.92f, 1.08f, infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "orbPulse")
+    Box(
+        Modifier.size(92.dp).graphicsLayer { scaleX = scale; scaleY = scale }
+            .drawBehind {
+                if (playing) drawCircle(AccentB.copy(alpha = 0.22f), radius = size.minDimension / 2f * pulse + 6.dp.toPx())
+                rotate(if (playing) angle else 0f) {
+                    drawCircle(
+                        Brush.sweepGradient(listOf(AccentA, AccentB, Color(0xFF7C4DFF), AccentA)),
+                        radius = size.minDimension / 2f - 2.dp.toPx(),
+                        style = Stroke(width = 4.dp.toPx())
+                    )
+                }
+            }
+            .padding(8.dp)
+            .clip(CircleShape)
+            .background(Brush.radialGradient(listOf(Color(0xFF2E364A), Color(0xFF121722))))
+            .clickable(interactionSource = src, indication = null) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (playing) IconPause(Color.White, 34.dp) else IconPlay(Color.White, 34.dp)
     }
 }
 
@@ -181,9 +361,8 @@ fun FloatingNav(tab: Int, onTab: (Int) -> Unit) {
         items.forEachIndexed { i, item ->
             val sel = tab == i
             Row(
-                Modifier.clip(RoundedCornerShape(24.dp))
+                Modifier.pressable { onTab(i) }.clip(RoundedCornerShape(24.dp))
                     .then(if (sel) Modifier.background(AccentBrush) else Modifier)
-                    .clickable { onTab(i) }
                     .padding(horizontal = if (sel) 16.dp else 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -238,18 +417,15 @@ fun MiniPlayer(onOpen: () -> Unit) {
                 Text(Engine.title(s), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                 Text(Engine.artist(s), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp)
             }
-            Text(
-                "⏮", fontSize = 20.sp,
-                modifier = Modifier.clickable { Engine.player.seekToPreviousMediaItem() }.padding(8.dp)
-            )
-            Text(
-                if (Engine.isPlaying) "⏸" else "▶", fontSize = 22.sp,
-                modifier = Modifier.clickable { Engine.togglePlay() }.padding(8.dp)
-            )
-            Text(
-                "⏭", fontSize = 20.sp,
-                modifier = Modifier.clickable { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }.padding(8.dp)
-            )
+            Box(Modifier.pressable { Engine.player.seekToPreviousMediaItem() }.padding(10.dp)) {
+                IconSkip(false, Color.White, 20.dp)
+            }
+            Box(Modifier.pressable { Engine.togglePlay() }.padding(10.dp)) {
+                if (Engine.isPlaying) IconPause(Color.White, 24.dp) else IconPlay(Color.White, 24.dp)
+            }
+            Box(Modifier.pressable { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }.padding(10.dp)) {
+                IconSkip(true, Color.White, 20.dp)
+            }
         }
         Box(Modifier.fillMaxWidth().height(3.dp).background(Card2)) {
             Box(Modifier.fillMaxWidth(frac).height(3.dp).background(AccentBrush))
@@ -472,38 +648,39 @@ fun NowPlayingScreen() {
                 Text(fmt(Engine.positionMs), color = Dim, fontSize = 12.sp)
                 Text(fmt(Engine.durationMs), color = Dim, fontSize = 12.sp)
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(10.dp))
             Row(
                 Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "🔀", fontSize = 22.sp, color = if (Engine.shuffle) AccentA else Dim,
-                    modifier = Modifier.clickable { Engine.toggleShuffle() }.padding(10.dp)
-                )
-                Text(
-                    "⏮", fontSize = 30.sp,
-                    modifier = Modifier.clickable { Engine.player.seekToPreviousMediaItem() }.padding(10.dp)
-                )
-                Box(
-                    Modifier.size(76.dp).clip(CircleShape).background(AccentBrush).clickable { Engine.togglePlay() },
-                    Alignment.Center
-                ) { Text(if (Engine.isPlaying) "⏸" else "▶", fontSize = 32.sp, color = Color.White) }
-                Text(
-                    "⏭", fontSize = 30.sp,
-                    modifier = Modifier.clickable { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }.padding(10.dp)
-                )
-                Text(
-                    if (Engine.repeatMode == Player.REPEAT_MODE_ONE) "🔂" else "🔁", fontSize = 22.sp,
-                    color = if (Engine.repeatMode != Player.REPEAT_MODE_OFF) AccentA else Dim,
-                    modifier = Modifier.clickable { Engine.cycleRepeat() }.padding(10.dp)
-                )
+                NeonButton(48.dp, Engine.shuffle, { Engine.toggleShuffle() }) {
+                    IconShuffle(if (Engine.shuffle) AccentA else Dim, 24.dp)
+                }
+                NeonButton(56.dp, false, { Engine.player.seekToPreviousMediaItem() }) {
+                    IconSkip(false, Color.White, 26.dp)
+                }
+                PlayOrb(Engine.isPlaying) { Engine.togglePlay() }
+                NeonButton(56.dp, false, { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }) {
+                    IconSkip(true, Color.White, 26.dp)
+                }
+                val rep = Engine.repeatMode != Player.REPEAT_MODE_OFF
+                NeonButton(48.dp, rep, { Engine.cycleRepeat() }) {
+                    IconRepeat(if (rep) AccentA else Dim, 24.dp)
+                    if (Engine.repeatMode == Player.REPEAT_MODE_ONE) {
+                        Text("1", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
             }
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SoftBtn(if (showLyrics) "🖼 Ảnh bìa" else "🎤 Lời bài hát") { showLyrics = !showLyrics }
-                SoftBtn("✏ Sửa thông tin") { if (!s.streaming) Engine.editing = s }
+            val repText = when (Engine.repeatMode) {
+                Player.REPEAT_MODE_ALL -> "tất cả"
+                Player.REPEAT_MODE_ONE -> "một bài"
+                else -> "tắt"
             }
+            Text(
+                "Ngẫu nhiên: ${if (Engine.shuffle) "BẬT" else "tắt"}   •   Lặp: $repText",
+                color = if (Engine.shuffle || Engine.repeatMode != Player.REPEAT_MODE_OFF) AccentA else Dim,
+                fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp)
+            )
         }
     }
 }

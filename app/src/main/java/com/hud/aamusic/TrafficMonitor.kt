@@ -66,10 +66,16 @@ class TrafficMonitor(
         }
     }
 
+    /** Tạm dừng GPS (tiết kiệm pin). Có thể gọi start() lại sau đó. */
     fun stop() {
-        lm.removeUpdates(listener)
-        io.shutdownNow()
+        if (started) lm.removeUpdates(listener)
         started = false
+        Diag.gps = "GPS: tạm tắt (chưa kết nối Android Auto, tiết kiệm pin)"
+    }
+
+    fun release() {
+        stop()
+        io.shutdownNow()
     }
 
     private fun online() = ctx.getSharedPreferences("aa", Context.MODE_PRIVATE).getBoolean("online", true)
