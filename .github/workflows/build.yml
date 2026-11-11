@@ -21,11 +21,9 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build release APK
-        shell: bash
-        run: gradle assembleRelease --no-daemon 
-      
+        run: gradle assembleRelease --no-daemon --console=plain
+
       - name: Rename APK
-        shell: bash
         run: |
           mkdir -p out
           cp app/build/outputs/apk/release/app-release.apk "out/AA Music.apk"
