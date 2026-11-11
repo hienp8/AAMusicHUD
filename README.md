@@ -1,19 +1,15 @@
 # AA Music
 Trình phát nhạc hiện đại cho điện thoại và Android Auto.
 
-- Thư viện, mini player, màn hình Đang phát (nền màu theo ảnh bìa), lời bài hát đồng bộ
-- Đọc / ghi tag ID3 (tên, nghệ sĩ, album, bìa, lời) trực tiếp trong file nhạc
-- Kiểm tra toàn bộ thư viện, đề xuất bổ sung tag từ internet
-- Equalizer dọc + Bass booster, thoát hoàn toàn
-- Cảnh báo camera / giới hạn tốc độ trên thẻ media của Android Auto, đọc bằng giọng nói
+- Thư viện: bài hát, yêu thích, playlist, album, nghệ sĩ, radio; chọn thư mục nhạc; ẩn / xóa bài
+- Đọc / ghi tag ID3 (tên, nghệ sĩ, album, bìa, lời), kiểm tra toàn thư viện, tìm thủ công
+- Lời bài hát đồng bộ; dòng lời hiện trên màn hình khoá và thông báo; nút "Lời" mở toàn màn hình
+- Equalizer 10 dải (dọc) + Bass booster (ngang)
+- Android Auto: cảnh báo camera / giới hạn tốc độ, hoặc hình chụp từ Wyn / DiOTO thay ảnh bìa (cần root)
 
 ## Build (GitHub Actions)
 `settings.gradle.kts`, `app/`, `.github/` phải ở thư mục GỐC repo. Tab Actions > "Build AA Music" > Run workflow,
 tải artifact `AA-Music` (file `AA Music.apk`).
 
 ## Dữ liệu cảnh báo
-Chạy workflow "Update traffic data" một lần để tạo `data/vn_cameras.csv` và `data/vn_signs.csv`
-(lấy từ OpenStreetMap). App tự tải hai file này mỗi ngày.
-
-## Cập nhật đè không báo "không tương thích"
-Mọi bản build dùng chung khoá ký `app/aamusic.keystore` và versionCode tăng theo số lần build.
+Chạy workflow "Update traffic data" một lần để tạo `data/vn_cameras.csv` và `data/vn_signs.csv`.
