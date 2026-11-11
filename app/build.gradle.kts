@@ -51,6 +51,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.palette:palette-ktx:1.0.0")
+    // Phát hiện điện thoại có đang kết nối Android Auto hay không (để bật/tắt GPS)
+    implementation("androidx.car.app:app:1.4.0")
     implementation("androidx.media:media:1.7.0")
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     // Đọc / ghi tag ID3, FLAC, M4A (bản dành cho Android)
