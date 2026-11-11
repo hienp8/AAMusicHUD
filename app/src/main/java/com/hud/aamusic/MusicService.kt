@@ -75,6 +75,7 @@ class MusicService : MediaBrowserServiceCompat() {
         )
         traffic.start()
         Diag.service = "Dịch vụ: đang chạy"
+        DataSync.syncAsync(false)
         updateState()
         pushMeta(true)
     }

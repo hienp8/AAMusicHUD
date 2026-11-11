@@ -2,6 +2,7 @@ package com.hud.aamusic
 
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
@@ -126,7 +127,7 @@ object Engine {
         val media = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val proj = arrayOf(
             MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM, MediaStore.Audio.Media.DURATION
+            MediaStore.Audio.Media.ALBUM, MediaStore.Audio.Media.DURATION, MediaStore.Audio.Media.DATA
         )
         try {
             app.contentResolver.query(
@@ -139,7 +140,7 @@ object Engine {
                     val artist = c.getString(2)?.takeIf { it != "<unknown>" } ?: ""
                     val album = c.getString(3) ?: ""
                     out += Song("L:$id", c.getString(1) ?: "?", artist, album,
-                        ContentUris.withAppendedId(media, id), c.getLong(4))
+                        ContentUris.withAppendedId(media, id), c.getLong(4), false, c.getString(5) ?: "")
                 }
             }
         } catch (e: SecurityException) {
@@ -318,17 +319,56 @@ object Engine {
             var lines = emptyList<LrcLine>()
             var plain = ""
             if (s != null) {
-                val f = lyricsFile(s)
-                if (f.exists()) {
-                    try {
-                        val t = f.readText()
-                        val l = Lrc.parse(t)
-                        if (l.isNotEmpty()) lines = l else plain = t
-                    } catch (e: Exception) { }
+                var text = ""
+                if (!s.streaming && s.path.isNotEmpty()) text = Tags.read(s.path)?.lyrics ?: ""
+                if (text.isBlank()) {
+                    val f = lyricsFile(s)
+                    if (f.exists()) {
+                        try { text = f.readText() } catch (e: Exception) { }
+                    }
+                }
+                if (text.isNotBlank()) {
+                    val l = Lrc.parse(text)
+                    if (l.isNotEmpty()) lines = l else plain = text
                 }
             }
             main.post { lyricLines = lines; plainLyrics = plain }
         }
+    }
+
+    fun songById(id: String): Song? = index[id]
+
+    /** Ghi tag vào file (nếu có quyền) và luôn lưu một bản trong app để hiển thị ngay. */
+    fun applyTags(s: Song, title: String?, artist: String?, album: String?, lyrics: String?, cover: ByteArray?): String? {
+        var err: String? = null
+        if (!s.streaming && s.path.isNotEmpty()) {
+            err = if (!Tags.canWrite()) "Chưa cấp quyền Quản lý tất cả tệp" else Tags.write(s.path, title, artist, album, lyrics, cover)
+        }
+        val e = edits[s.id]
+        val t = title?.takeIf { it.isNotBlank() } ?: e?.first ?: ""
+        val a = artist?.takeIf { it.isNotBlank() } ?: e?.second ?: ""
+        val b = album?.takeIf { it.isNotBlank() } ?: e?.third ?: ""
+        main.post { saveEdit(s, t, a, b) }
+        if (cover != null) saveArt(s, cover)
+        if (!lyrics.isNullOrBlank()) {
+            try { saveLyrics(s, lyrics) } catch (ex: Exception) { }
+        }
+        return err
+    }
+
+    fun playShuffled(list: List<Song>) {
+        if (list.isEmpty()) return
+        player.shuffleModeEnabled = true
+        play(list, kotlin.random.Random.nextInt(list.size))
+    }
+
+    /** Thoát hoàn toàn: dừng nhạc, dừng dịch vụ, đóng app và kết thúc tiến trình. */
+    fun quit(activity: android.app.Activity) {
+        try { player.stop() } catch (e: Exception) { }
+        releaseEffects()
+        try { app.stopService(Intent(app, MusicService::class.java)) } catch (e: Exception) { }
+        activity.finishAndRemoveTask()
+        main.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 400)
     }
 
     // ---------------- Equalizer & Bass booster ----------------

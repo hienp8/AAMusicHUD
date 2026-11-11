@@ -24,7 +24,7 @@ class TrafficMonitor(
 ) {
     private val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     private val main = Handler(Looper.getMainLooper())
-    private val io = Executors.newSingleThreadExecutor()
+    private val io = Executors.newFixedThreadPool(2)
     private val store = PointStore(ctx)
     private var started = false
 

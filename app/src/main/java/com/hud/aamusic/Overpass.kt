@@ -24,7 +24,7 @@ object Overpass {
                 val c = URL(m).openConnection() as HttpURLConnection
                 c.requestMethod = "POST"
                 c.doOutput = true
-                c.connectTimeout = 8000
+                c.connectTimeout = 6000
                 c.readTimeout = 20000
                 c.setRequestProperty("User-Agent", "AAMusicHud/2.0 (https://github.com/hienp8/AAMusicHUD)")
                 c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
@@ -36,7 +36,7 @@ object Overpass {
                 }
                 log.append("$host: HTTP $code; ")
             } catch (e: Exception) {
-                log.append("$host: ${e.javaClass.simpleName}; ")
+                log.append("$host: ${e.javaClass.simpleName} ${e.message?.take(60) ?: ""}; ")
             }
         }
         return Res(null, log.toString())

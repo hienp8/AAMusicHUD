@@ -18,9 +18,9 @@ data class Pt(
 }
 
 /**
- * Dữ liệu offline do người dùng nhập, lưu trong bộ nhớ riêng của app:
- *  - alerts.csv : camera / điểm cảnh báo (mặc định mỗi dòng là camera)
- *  - signs.csv  : biển giới hạn tốc độ (mặc định mỗi dòng là biển)
+ * Dữ liệu cảnh báo offline, lưu trong bộ nhớ riêng của app:
+ *  - alerts.csv, signs.csv                 : do bạn nhập tay
+ *  - online_alerts.csv, online_signs.csv   : tải tự động từ URL (xem DataSync)
  *
  * Định dạng dòng (phân cách bằng , ; hoặc tab; dòng bắt đầu bằng # và dòng tiêu đề bị bỏ qua):
  *   vĩ độ, kinh độ
@@ -28,23 +28,30 @@ data class Pt(
  *   vĩ độ, kinh độ, loại, giới hạn, tên      (loại: camera | sign | warn)
  */
 class PointStore(private val ctx: Context) {
-    private fun alertsFile() = File(ctx.filesDir, "alerts.csv")
-    private fun signsFile() = File(ctx.filesDir, "signs.csv")
+    private fun f(name: String) = File(ctx.filesDir, name)
 
-    fun fileFor(kind: String): File = if (kind == "signs") signsFile() else alertsFile()
+    fun fileFor(kind: String): File = f(if (kind == "signs") "signs.csv" else "alerts.csv")
+    fun onlineFile(kind: String): File = f(if (kind == "signs") "online_signs.csv" else "online_alerts.csv")
 
-    fun stamp(): Long = alertsFile().lastModified() + signsFile().lastModified()
+    fun stamp(): Long =
+        listOf("alerts.csv", "signs.csv", "online_alerts.csv", "online_signs.csv").sumOf { f(it).lastModified() }
 
     fun clear() {
-        alertsFile().delete()
-        signsFile().delete()
+        f("alerts.csv").delete()
+        f("signs.csv").delete()
     }
 
-    /** @return Pair(điểm cảnh báo, biển giới hạn) */
+    /** @return Pair(điểm cảnh báo, biển giới hạn) từ tất cả các file */
     fun load(): Pair<List<Pt>, List<Pt>> {
         val all = ArrayList<Pt>()
-        if (alertsFile().exists()) all += parse(alertsFile().readText(Charsets.UTF_8), Pt.CAM)
-        if (signsFile().exists()) all += parse(signsFile().readText(Charsets.UTF_8), Pt.SIGN)
+        fun add(name: String, type: Int) {
+            val x = f(name)
+            if (x.exists()) all += parse(x.readText(Charsets.UTF_8), type)
+        }
+        add("alerts.csv", Pt.CAM)
+        add("signs.csv", Pt.SIGN)
+        add("online_alerts.csv", Pt.CAM)
+        add("online_signs.csv", Pt.SIGN)
         return Pair(all.filter { it.type != Pt.SIGN }, all.filter { it.type == Pt.SIGN })
     }
 
@@ -63,7 +70,8 @@ class PointStore(private val ctx: Context) {
                 if (lat !in -90.0..90.0 || lon !in -180.0..180.0) continue
 
                 val f2 = f.getOrNull(2) ?: ""
-                if (f2.isEmpty() || f2.toIntOrNull() != null) {
+                val numericLike = f2.isEmpty() || f2.first().isDigit() || f2.contains(':')
+                if (numericLike) {
                     out += Pt(lat, lon, defaultType, parseLimit(f2), f.getOrNull(3) ?: "")
                 } else {
                     val type = when (f2.lowercase()) {
