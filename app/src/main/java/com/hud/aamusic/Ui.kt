@@ -347,6 +347,9 @@ fun Root() {
         }
     }
     Engine.editing?.let { TagEditor(it) }
+    Lists.pickFor?.let { PlaylistPicker(it) }
+    Lists.confirmDelete?.let { DeleteConfirm(it) }
+    if (Lists.creatingPlaylist) NewPlaylistDialog()
 }
 
 @Composable
@@ -464,29 +467,74 @@ fun LibraryScreen() {
             Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Bài hát", "Album", "Nghệ sĩ", "Radio").forEachIndexed { i, t ->
+            listOf("Bài hát", "Yêu thích", "Playlist", "Album", "Nghệ sĩ", "Radio").forEachIndexed { i, t ->
                 Pill(t, sub == i && filter == null) { sub = i; filter = null }
             }
         }
         Spacer(Modifier.height(8.dp))
         val f = filter
         when {
+            f != null && f.first == "playlist" -> {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("← ${f.second}", color = AccentA, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f).clickable { filter = null })
+                    SoftBtn("🗑 Xoá playlist") { Lists.deletePlaylist(f.second); filter = null }
+                }
+                SongList(Lists.songsOf(f.second), true, f.second)
+            }
             f != null -> {
                 Text("← ${f.second}", color = AccentA, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clickable { filter = null }.padding(16.dp))
                 SongList(all.filter { if (f.first == "album") Engine.album(it) == f.second else Engine.artist(it) == f.second }, true)
             }
             sub == 0 -> SongList(all.filter { match(it) }, true)
-            sub == 1 -> GroupList(all.filter { match(it) }.groupBy { Engine.album(it) }) { filter = "album" to it }
-            sub == 2 -> GroupList(all.filter { match(it) }.groupBy { Engine.artist(it) }) { filter = "artist" to it }
+            sub == 1 -> {
+                val fav = Lists.favSongs().filter { match(it) }
+                if (fav.isEmpty()) EmptyHint("Chưa có bài yêu thích. Chạm ♡ ở màn hình Đang phát hoặc dùng menu ⋮ của bài.")
+                else SongList(fav, true)
+            }
+            sub == 2 -> PlaylistList { filter = "playlist" to it }
+            sub == 3 -> GroupList(all.filter { match(it) }.groupBy { Engine.album(it) }) { filter = "album" to it }
+            sub == 4 -> GroupList(all.filter { match(it) }.groupBy { Engine.artist(it) }) { filter = "artist" to it }
             else -> {
                 val radio = Engine.streams()
-                if (radio.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text("Chưa có radio. Thêm ở Cài đặt (mỗi dòng: Tên|URL).", color = Dim,
-                            textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp))
-                    }
-                } else SongList(radio, false)
+                if (radio.isEmpty()) EmptyHint("Chưa có radio. Thêm ở Cài đặt (mỗi dòng: Tên|URL).")
+                else SongList(radio, false)
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyHint(text: String) {
+    Box(Modifier.fillMaxSize(), Alignment.Center) {
+        Text(text, color = Dim, textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp))
+    }
+}
+
+@Composable
+fun PlaylistList(onOpen: (String) -> Unit) {
+    val pl = Lists.playlists
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
+        item {
+            Row(Modifier.padding(16.dp)) { GradBtn("＋ Tạo playlist mới") { Lists.creatingPlaylist = true } }
+        }
+        if (pl.isEmpty()) {
+            item { Text("Chưa có playlist. Thêm bài qua menu ⋮ của từng bài.", color = Dim, modifier = Modifier.padding(horizontal = 16.dp)) }
+        }
+        items(pl.keys.toList()) { name ->
+            Row(
+                Modifier.fillMaxWidth().clickable { onOpen(name) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)).background(AccentBrush), Alignment.Center) {
+                    Text("♪", fontSize = 24.sp, color = Color.White)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text("${pl[name]?.size ?: 0} bài", color = Dim, fontSize = 12.sp)
+                }
             }
         }
     }
@@ -512,14 +560,9 @@ fun GroupList(groups: Map<String, List<Song>>, onOpen: (String) -> Unit) {
 }
 
 @Composable
-fun SongList(list: List<Song>, header: Boolean) {
+fun SongList(list: List<Song>, header: Boolean, playlist: String? = null) {
     if (list.isEmpty()) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Text(
-                "Không có bài hát. Hãy cấp quyền truy cập nhạc ở Cài đặt.", color = Dim,
-                textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp)
-            )
-        }
+        EmptyHint("Không có bài hát. Hãy cấp quyền truy cập nhạc ở Cài đặt.")
         return
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
@@ -531,12 +574,12 @@ fun SongList(list: List<Song>, header: Boolean) {
                 }
             }
         }
-        itemsIndexed(list, key = { _, s -> s.id }) { i, s -> SongRow(s) { Engine.play(list, i) } }
+        itemsIndexed(list, key = { _, s -> s.id }) { i, s -> SongRow(s, playlist) { Engine.play(list, i) } }
     }
 }
 
 @Composable
-fun SongRow(s: Song, onClick: () -> Unit) {
+fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     val playing = Engine.current?.id == s.id
     Row(
@@ -555,13 +598,25 @@ fun SongRow(s: Song, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp
             )
         }
+        if (Lists.isFav(s)) Text("♥", color = AccentB, fontSize = 16.sp, modifier = Modifier.padding(end = 2.dp))
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, null, tint = Dim) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
-                    text = { Text("Sửa thông tin / bìa / lời") },
-                    onClick = { menu = false; if (!s.streaming) Engine.editing = s }
+                    text = { Text(if (Lists.isFav(s)) "♥ Bỏ yêu thích" else "♡ Thêm vào yêu thích") },
+                    onClick = { menu = false; Lists.toggleFav(s) }
                 )
+                if (!s.streaming) {
+                    DropdownMenuItem(text = { Text("＋ Thêm vào playlist") }, onClick = { menu = false; Lists.pickFor = s })
+                }
+                if (playlist != null) {
+                    DropdownMenuItem(text = { Text("➖ Bỏ khỏi playlist này") }, onClick = { menu = false; Lists.removeFrom(playlist, s) })
+                }
+                if (!s.streaming) {
+                    DropdownMenuItem(text = { Text("✏ Sửa thông tin / bìa / lời") }, onClick = { menu = false; Engine.editing = s })
+                    DropdownMenuItem(text = { Text("🙈 Xóa khỏi danh sách") }, onClick = { menu = false; Lists.hide(s) })
+                    DropdownMenuItem(text = { Text("🗑 Xóa file khỏi máy") }, onClick = { menu = false; Lists.confirmDelete = s })
+                }
             }
         }
     }
@@ -626,10 +681,16 @@ fun NowPlayingScreen() {
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Text(
-                Engine.title(s), fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    Engine.title(s), fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)
+                )
+                val fav = Lists.isFav(s)
+                Box(Modifier.pressable { Lists.toggleFav(s) }.padding(8.dp)) {
+                    Text(if (fav) "♥" else "♡", fontSize = 28.sp, color = if (fav) AccentB else Dim)
+                }
+            }
             Text(
                 "${Engine.artist(s)} • ${Engine.album(s)}", color = Color(0xFFCFD3D8), maxLines = 1,
                 overflow = TextOverflow.Ellipsis, fontSize = 14.sp

@@ -46,6 +46,10 @@ class MusicService : MediaBrowserServiceCompat() {
     private var aaConnected = false
     private var inForeground = false
     private var lastArt: Bitmap? = null
+    private var capArt: Bitmap? = null
+    private var capSeq = 0
+    private var lyricLine = ""
+    private val lyricRunnable = Runnable { scheduleLyric() }
 
     private var speedKmh = 0
     private var limit: Int? = null
@@ -61,13 +65,25 @@ class MusicService : MediaBrowserServiceCompat() {
             updateState()
             if (playWhenReady) startFg()
         }
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { pushMeta(true) }
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            lyricLine = ""
+            pushMeta(true)
+            scheduleLyric()
+        }
+        override fun onIsPlayingChanged(isPlaying: Boolean) { scheduleLyric() }
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int
+        ) { scheduleLyric() }
     }
 
     private val connObserver = Observer<Int> { t -> onCarType(t) }
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "loc_mode") updateLocation()
+        when (key) {
+            "loc_mode" -> updateLocation()
+            "cap_enabled", "cap_pkg" -> updateCapture()
+            "lock_lyrics" -> { lyricLine = ""; scheduleLyric(); pushMeta(true) }
+        }
     }
 
     override fun onCreate() {
@@ -112,9 +128,16 @@ class MusicService : MediaBrowserServiceCompat() {
 
         Diag.service = "Dịch vụ: đang chạy"
         DataSync.syncAsync(false)
+        ScreenCapture.onFrame = { bmp ->
+            capArt = bmp
+            capSeq++
+            pushMeta(true)
+        }
         updateState()
         pushMeta(true)
         updateLocation()
+        updateCapture()
+        scheduleLyric()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -132,6 +155,7 @@ class MusicService : MediaBrowserServiceCompat() {
             else -> {
                 startFg()
                 updateLocation()
+                updateCapture()
             }
         }
         return START_STICKY
@@ -152,6 +176,43 @@ class MusicService : MediaBrowserServiceCompat() {
             pushMeta(true)
         }
         updateLocation()
+        updateCapture()
+    }
+
+    /** Chụp hình Wyn / DiOTO làm ảnh bìa: chỉ chạy khi đang kết nối Android Auto. */
+    private fun updateCapture() {
+        val prefs = Engine.prefs
+        val pkg = prefs.getString("cap_pkg", "") ?: ""
+        val want = prefs.getBoolean("cap_enabled", false) && aaConnected && pkg.isNotBlank()
+        if (want) {
+            ScreenCapture.start(this, pkg, false)
+        } else if (!ScreenCapture.manual && ScreenCapture.running) {
+            ScreenCapture.stop()
+            capArt = null
+            pushMeta(true)
+        }
+    }
+
+    // ---------- Lời bài hát đồng bộ trên màn hình khoá ----------
+
+    private fun scheduleLyric() {
+        main.removeCallbacks(lyricRunnable)
+        if (!Engine.prefs.getBoolean("lock_lyrics", true) || !player.isPlaying) return
+        val lines = Engine.lyricLines
+        if (lines.isEmpty()) {
+            if (lyricLine.isNotEmpty()) { lyricLine = ""; pushMeta(true) }
+            main.postDelayed(lyricRunnable, 2500L)
+            return
+        }
+        val pos = player.currentPosition
+        val idx = lines.indexOfLast { it.timeMs <= pos + 150 }
+        val line = if (idx >= 0) lines[idx].text else ""
+        if (line != lyricLine) {
+            lyricLine = line
+            pushMeta(true)
+        }
+        val wait = if (idx + 1 < lines.size) lines[idx + 1].timeMs - pos else 3000L
+        main.postDelayed(lyricRunnable, wait.coerceIn(250L, 4000L))
     }
 
     private fun updateLocation() {
@@ -178,7 +239,7 @@ class MusicService : MediaBrowserServiceCompat() {
         val b = NotificationCompat.Builder(this, "aa")
             .setSmallIcon(R.drawable.ic_stat_music)
             .setContentTitle(s?.let { Engine.title(it) } ?: "AA Music")
-            .setContentText(s?.let { Engine.artist(it) } ?: "Sẵn sàng phát nhạc")
+            .setContentText(lyricLine.ifEmpty { s?.let { Engine.artist(it) } ?: "Sẵn sàng phát nhạc" })
             .setContentIntent(open)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
@@ -190,6 +251,14 @@ class MusicService : MediaBrowserServiceCompat() {
                 if (playing) "Tạm dừng" else "Phát", actionIntent(ACTION_TOGGLE, 2)
             )
             .addAction(android.R.drawable.ic_media_next, "Tiếp", actionIntent(ACTION_NEXT, 3))
+            .addAction(
+                android.R.drawable.ic_menu_agenda, "Lời",
+                PendingIntent.getActivity(
+                    this, 5,
+                    Intent(this, LyricsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            )
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Đóng", actionIntent(ACTION_QUIT, 4))
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
@@ -241,6 +310,8 @@ class MusicService : MediaBrowserServiceCompat() {
         when {
             parentId == "root" -> {
                 out += folder("local", "Bài hát")
+                out += folder("fav", "Yêu thích")
+                out += folder("playlists", "Playlist")
                 out += folder("albums", "Album")
                 out += folder("online", "Radio online")
             }
@@ -252,6 +323,12 @@ class MusicService : MediaBrowserServiceCompat() {
                 Engine.ensureLoaded().filter { Engine.album(it) == a }.take(200).forEach { out += playable(it) }
             }
             parentId == "online" -> Engine.streams().forEach { out += playable(it) }
+            parentId == "fav" -> Lists.favSongs().take(300).forEach { out += playable(it, "FAV|") }
+            parentId == "playlists" -> Lists.playlists.keys.forEach { out += folder("playlist:$it", it) }
+            parentId.startsWith("playlist:") -> {
+                val n = parentId.removePrefix("playlist:")
+                Lists.songsOf(n).take(300).forEach { out += playable(it, "PL:$n|") }
+            }
         }
         result.sendResult(out)
     }
@@ -261,8 +338,8 @@ class MusicService : MediaBrowserServiceCompat() {
         MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
     )
 
-    private fun playable(s: Song) = MediaBrowserCompat.MediaItem(
-        MediaDescriptionCompat.Builder().setMediaId(s.id).setTitle(Engine.title(s))
+    private fun playable(s: Song, prefix: String = "") = MediaBrowserCompat.MediaItem(
+        MediaDescriptionCompat.Builder().setMediaId(prefix + s.id).setTitle(Engine.title(s))
             .setSubtitle(Engine.artist(s)).setMediaUri(s.uri).build(),
         MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
     )
@@ -301,9 +378,10 @@ class MusicService : MediaBrowserServiceCompat() {
         val title = s?.let { Engine.title(it) } ?: "AA Music"
         val base = s?.let { Engine.artist(it) } ?: ""
         val onCar = aaConnected
-        val artist = if (onCar && alert.isNotEmpty()) "⚠ $alert" else base
+        val lyricOn = !onCar && Engine.prefs.getBoolean("lock_lyrics", true) && lyricLine.isNotEmpty()
+        val artist = if (onCar && alert.isNotEmpty()) "⚠ $alert" else if (lyricOn) lyricLine else base
         val rounded = (speedKmh / 2) * 2
-        val key = if (onCar) "$title|$artist|$rounded|$limit|car" else "$title|$artist|phone|${Engine.artVersion}"
+        val key = if (onCar) "$title|$artist|$rounded|$limit|car|$capSeq" else "$title|$artist|phone|${Engine.artVersion}"
         if (key == lastKey) return
         lastKey = key
         lastPush = now
@@ -311,8 +389,9 @@ class MusicService : MediaBrowserServiceCompat() {
         val lim = limit
         val al = alert
         val dur = player.duration.takeIf { it > 0 } ?: -1L
+        val capLocal = capArt
         thread {
-            val art = if (onCar) HudBitmap.render(spd, lim, al) else (Engine.loadArt(s, 512) ?: HudBitmap.placeholder())
+            val art = if (onCar) (capLocal ?: HudBitmap.render(spd, lim, al)) else (Engine.loadArt(s, 512) ?: HudBitmap.placeholder())
             main.post {
                 lastArt = art
                 session.setMetadata(
@@ -330,6 +409,9 @@ class MusicService : MediaBrowserServiceCompat() {
 
     override fun onDestroy() {
         Diag.service = "Dịch vụ: đã dừng"
+        main.removeCallbacks(lyricRunnable)
+        ScreenCapture.onFrame = null
+        if (!ScreenCapture.manual) ScreenCapture.stop()
         Engine.prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         try { conn?.type?.removeObserver(connObserver) } catch (e: Throwable) { }
         player.removeListener(listener)

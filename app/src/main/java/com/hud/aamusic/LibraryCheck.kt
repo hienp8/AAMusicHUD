@@ -95,7 +95,7 @@ object LibraryCheck {
     }
 
     /** Đoán (nghệ sĩ, tên bài) từ tên file dạng "Nghệ sĩ - Tên bài.mp3". */
-    private fun guess(path: String): Pair<String, String> {
+    fun guess(path: String): Pair<String, String> {
         val name = File(path).nameWithoutExtension.replace('_', ' ')
             .replace(Regex("^\\d+[.\\-\\s]+"), "").trim()
         val parts = name.split(" - ", limit = 2)

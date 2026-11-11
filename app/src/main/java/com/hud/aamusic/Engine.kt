@@ -6,7 +6,9 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.media.MediaScannerConnection
 import android.media.audiofx.BassBoost
+import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.os.Build
@@ -30,6 +32,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import org.json.JSONObject
 import java.io.File
 import kotlin.concurrent.thread
+import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.max
 
 /** Trung tâm của app: player dùng chung cho giao diện điện thoại và Android Auto. */
@@ -38,8 +42,11 @@ object Engine {
     lateinit var player: ExoPlayer
     private val main = Handler(Looper.getMainLooper())
 
+    // ---- Thư viện ----
+    var songs by mutableStateOf<List<Song>>(emptyList())      // sau khi lọc thư mục / bài đã ẩn
+    private var allSongs: List<Song> = emptyList()
+
     // ---- Trạng thái cho giao diện ----
-    var songs by mutableStateOf<List<Song>>(emptyList())
     var current by mutableStateOf<Song?>(null)
     var isPlaying by mutableStateOf(false)
     var positionMs by mutableLongStateOf(0L)
@@ -53,16 +60,30 @@ object Engine {
     var lyricLines by mutableStateOf<List<LrcLine>>(emptyList())
     var plainLyrics by mutableStateOf("")
 
-    // ---- Equalizer / Bass ----
-    var eqInfo by mutableStateOf<EqInfo?>(null)
+    // ---- Equalizer 10 dải + Bass ----
+    val EQ_FREQS = intArrayOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
+    val EQ_PRESETS: List<Pair<String, IntArray>> = listOf(
+        "Phẳng" to intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        "Bass mạnh" to intArrayOf(6, 5, 4, 2, 0, 0, 0, 0, 0, 0),
+        "Treble" to intArrayOf(0, 0, 0, 0, 0, 1, 2, 4, 5, 6),
+        "Giọng hát" to intArrayOf(-2, -2, -1, 1, 3, 4, 3, 1, 0, -1),
+        "Rock" to intArrayOf(5, 4, 3, 1, -1, -1, 1, 3, 4, 5),
+        "Pop" to intArrayOf(-1, 1, 3, 4, 3, 0, -1, -1, 1, 2),
+        "Jazz" to intArrayOf(3, 2, 1, 2, -1, -1, 0, 1, 2, 3),
+        "Cổ điển" to intArrayOf(4, 3, 2, 1, 0, 0, 0, 1, 2, 3),
+        "Điện tử" to intArrayOf(5, 4, 1, 0, -2, 2, 1, 1, 4, 5)
+    )
+    var eqInfo by mutableStateOf<EqInfo?>(EqInfo(-1200, 1200, EQ_FREQS.toList(), EQ_PRESETS.map { it.first }))
     var eqEnabled by mutableStateOf(false)
-    val bandLevels = mutableStateListOf<Int>()
+    val bandLevels = mutableStateListOf<Int>()     // đơn vị 1/100 dB
     var bassStrength by mutableIntStateOf(0)
+    private var dp: DynamicsProcessing? = null
     private var eq: Equalizer? = null
     private var bass: BassBoost? = null
     private var attachedSession = -1
 
     private var index: Map<String, Song> = emptyMap()
+    private var keyIndex: Map<String, Song> = emptyMap()
     private var streamIndex: Map<String, Song> = emptyMap()
     private val edits = HashMap<String, Triple<String, String, String>>()
     private val artCache = LruCache<String, Bitmap>(40)
@@ -75,7 +96,7 @@ object Engine {
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (player.duration > 0) durationMs = player.duration
             if (playbackState == Player.STATE_READY) {
-                if (eq == null) attachEffects(player.audioSessionId)
+                if (dp == null && eq == null) attachEffects(player.audioSessionId)
                 refreshCurrent()
             }
         }
@@ -99,7 +120,10 @@ object Engine {
         }
         eqEnabled = prefs.getBoolean("eq_on", false)
         bassStrength = prefs.getInt("bass", 0)
+        val saved = prefs.getString("eq10", "")?.split(",")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
+        for (i in 0 until 10) bandLevels.add(if (saved.size == 10) saved[i].coerceIn(-1200, 1200) else 0)
         loadEdits()
+        Lists.load()
     }
 
     // ---------------- Thư viện ----------------
@@ -112,15 +136,24 @@ object Engine {
     }
 
     fun ensureLoaded(): List<Song> {
-        if (songs.isEmpty()) applySongs(querySongs())
+        if (allSongs.isEmpty()) applySongs(querySongs())
         return songs
     }
 
     private fun applySongs(l: List<Song>) {
-        songs = l
+        allSongs = l
         index = l.associateBy { it.id }
+        keyIndex = l.associateBy { Lists.key(it) }
+        refilter()
         refreshCurrent()
     }
+
+    /** Lọc lại thư viện theo thư mục đã chọn và danh sách bài đã ẩn. */
+    fun refilter() {
+        songs = allSongs.filter { Lists.visible(it) }
+    }
+
+    fun pathMap(): Map<String, Song> = keyIndex
 
     private fun querySongs(): List<Song> {
         val out = ArrayList<Song>()
@@ -194,15 +227,26 @@ object Engine {
         player.play()
     }
 
+    private fun playIn(list: List<Song>, songId: String) {
+        val i = list.indexOfFirst { it.id == songId }
+        if (i >= 0) play(list, i)
+    }
+
+    /** Id từ Android Auto: "L:123", "FAV|L:123", "PL:tên playlist|L:123", "R:0". */
     fun playById(id: String) {
-        if (id.startsWith("L:")) {
-            val list = ensureLoaded()
-            val i = list.indexOfFirst { it.id == id }
-            if (i >= 0) play(list, i)
-        } else {
-            val list = streams()
-            val i = list.indexOfFirst { it.id == id }
-            if (i >= 0) play(listOf(list[i]), 0)
+        when {
+            id.startsWith("PL:") -> {
+                val rest = id.removePrefix("PL:")
+                val sep = rest.lastIndexOf('|')
+                if (sep > 0) playIn(Lists.songsOf(rest.substring(0, sep)), rest.substring(sep + 1))
+            }
+            id.startsWith("FAV|") -> playIn(Lists.favSongs(), id.removePrefix("FAV|"))
+            id.startsWith("L:") -> playIn(ensureLoaded(), id)
+            else -> {
+                val list = streams()
+                val i = list.indexOfFirst { it.id == id }
+                if (i >= 0) play(listOf(list[i]), 0)
+            }
         }
     }
 
@@ -214,6 +258,12 @@ object Engine {
             Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
+    }
+
+    fun playShuffled(list: List<Song>) {
+        if (list.isEmpty()) return
+        player.shuffleModeEnabled = true
+        play(list, kotlin.random.Random.nextInt(list.size))
     }
 
     fun tick() {
@@ -229,6 +279,35 @@ object Engine {
             current = s
             loadLyrics(s)
         }
+    }
+
+    // ---------------- Xoá bài ----------------
+
+    /** Xoá file nhạc khỏi máy. @return null nếu thành công, ngược lại là thông báo lỗi. */
+    fun deleteSong(s: Song): String? {
+        if (s.path.isEmpty()) return "Bài này không có đường dẫn file"
+        var ok = false
+        try { ok = File(s.path).delete() } catch (e: Exception) { }
+        if (!ok && Build.VERSION.SDK_INT < 30) {
+            try { ok = app.contentResolver.delete(s.uri, null, null) > 0 } catch (e: Exception) { }
+        }
+        if (!ok) return if (!Tags.canWrite()) "Chưa cấp quyền Quản lý tất cả tệp" else "Không xoá được file"
+        MediaScannerConnection.scanFile(app, arrayOf(s.path), null, null)
+        main.post {
+            // Gỡ khỏi hàng đợi đang phát
+            var i = player.mediaItemCount - 1
+            while (i >= 0) {
+                if (player.getMediaItemAt(i).mediaId == s.id) player.removeMediaItem(i)
+                i--
+            }
+            allSongs = allSongs.filter { it.id != s.id }
+            index = allSongs.associateBy { it.id }
+            keyIndex = allSongs.associateBy { Lists.key(it) }
+            Lists.forget(s)
+            refilter()
+            refreshCurrent()
+        }
+        return null
     }
 
     // ---------------- Chỉnh sửa thông tin ----------------
@@ -256,6 +335,26 @@ object Engine {
         try { editsFile().writeText(o.toString()) } catch (e: Exception) { }
         editsVersion++
     }
+
+    /** Ghi tag vào file (nếu có quyền) và luôn lưu một bản trong app để hiển thị ngay. */
+    fun applyTags(s: Song, title: String?, artist: String?, album: String?, lyrics: String?, cover: ByteArray?): String? {
+        var err: String? = null
+        if (!s.streaming && s.path.isNotEmpty()) {
+            err = if (!Tags.canWrite()) "Chưa cấp quyền Quản lý tất cả tệp" else Tags.write(s.path, title, artist, album, lyrics, cover)
+        }
+        val e = edits[s.id]
+        val t = title?.takeIf { it.isNotBlank() } ?: e?.first ?: ""
+        val a = artist?.takeIf { it.isNotBlank() } ?: e?.second ?: ""
+        val b = album?.takeIf { it.isNotBlank() } ?: e?.third ?: ""
+        main.post { saveEdit(s, t, a, b) }
+        if (cover != null) saveArt(s, cover)
+        if (!lyrics.isNullOrBlank()) {
+            try { saveLyrics(s, lyrics) } catch (ex: Exception) { }
+        }
+        return err
+    }
+
+    fun songById(id: String): Song? = index[id]
 
     // ---------------- Ảnh bìa ----------------
 
@@ -336,68 +435,38 @@ object Engine {
         }
     }
 
-    fun songById(id: String): Song? = index[id]
-
-    /** Ghi tag vào file (nếu có quyền) và luôn lưu một bản trong app để hiển thị ngay. */
-    fun applyTags(s: Song, title: String?, artist: String?, album: String?, lyrics: String?, cover: ByteArray?): String? {
-        var err: String? = null
-        if (!s.streaming && s.path.isNotEmpty()) {
-            err = if (!Tags.canWrite()) "Chưa cấp quyền Quản lý tất cả tệp" else Tags.write(s.path, title, artist, album, lyrics, cover)
-        }
-        val e = edits[s.id]
-        val t = title?.takeIf { it.isNotBlank() } ?: e?.first ?: ""
-        val a = artist?.takeIf { it.isNotBlank() } ?: e?.second ?: ""
-        val b = album?.takeIf { it.isNotBlank() } ?: e?.third ?: ""
-        main.post { saveEdit(s, t, a, b) }
-        if (cover != null) saveArt(s, cover)
-        if (!lyrics.isNullOrBlank()) {
-            try { saveLyrics(s, lyrics) } catch (ex: Exception) { }
-        }
-        return err
-    }
-
-    fun playShuffled(list: List<Song>) {
-        if (list.isEmpty()) return
-        player.shuffleModeEnabled = true
-        play(list, kotlin.random.Random.nextInt(list.size))
-    }
-
-    /** Thoát hoàn toàn: dừng nhạc, dừng dịch vụ, đóng app và kết thúc tiến trình. */
-    fun quit(activity: android.app.Activity) {
-        try { player.stop() } catch (e: Exception) { }
-        releaseEffects()
-        try { app.stopService(Intent(app, MusicService::class.java)) } catch (e: Exception) { }
-        activity.finishAndRemoveTask()
-        main.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 400)
-    }
-
-    // ---------------- Equalizer & Bass booster ----------------
+    // ---------------- Equalizer 10 dải & Bass booster ----------------
 
     private fun attachEffects(session: Int) {
         if (session == C.AUDIO_SESSION_ID_UNSET) return
-        if (session == attachedSession && eq != null) return
+        if (session == attachedSession && (dp != null || eq != null)) return
         releaseEffects()
         attachedSession = session
-        try {
-            val e = Equalizer(0, session)
-            val range = e.bandLevelRange
-            val n = e.numberOfBands.toInt()
-            val freqs = (0 until n).map { e.getCenterFreq(it.toShort()) / 1000 }
-            val presets = (0 until e.numberOfPresets.toInt()).map { e.getPresetName(it.toShort()) }
-            val saved = prefs.getString("eq_levels", "")?.split(",")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
-            val lo = range[0].toInt()
-            val hi = range[1].toInt()
-            val levels = (0 until n).map { if (saved.size == n) saved[it].coerceIn(lo, hi) else 0 }
-            for (i in 0 until n) e.setBandLevel(i.toShort(), levels[i].toShort())
-            e.setEnabled(eqEnabled)
-            eq = e
-            main.post {
-                bandLevels.clear()
-                bandLevels.addAll(levels)
-                eqInfo = EqInfo(lo, hi, freqs, presets)
+
+        // Ưu tiên bộ chỉnh âm 10 dải thật của Android 9 trở lên
+        if (Build.VERSION.SDK_INT >= 28) {
+            try {
+                val cfg = DynamicsProcessing.Config.Builder(
+                    DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2, true, 10, false, 0, false, 0, false
+                ).build()
+                val d = DynamicsProcessing(0, session, cfg)
+                dp = d
+                applyDp()
+                d.setEnabled(eqEnabled)
+            } catch (t: Throwable) {
+                dp = null
             }
-        } catch (ex: Exception) {
-            eq = null
+        }
+        // Dự phòng: Equalizer hệ thống (thường chỉ có 5 dải, app ánh xạ 10 dải vào các dải gần nhất)
+        if (dp == null) {
+            try {
+                val e = Equalizer(0, session)
+                eq = e
+                applyEqFallback()
+                e.setEnabled(eqEnabled)
+            } catch (t: Throwable) {
+                eq = null
+            }
         }
         try {
             val b = BassBoost(0, session)
@@ -409,37 +478,80 @@ object Engine {
         }
     }
 
+    private fun applyDp() {
+        val d = dp ?: return
+        try {
+            var maxPos = 0f
+            for (b in 0 until 10) {
+                val g = (bandLevels.getOrNull(b) ?: 0) / 100f
+                if (g > maxPos) maxPos = g
+                for (ch in 0 until 2) {
+                    d.setPreEqBandByChannelIndex(ch, b, DynamicsProcessing.EqBand(true, EQ_FREQS[b].toFloat(), g))
+                }
+            }
+            d.setInputGainAllChannelsTo(-maxPos * 0.5f)
+        } catch (t: Throwable) {
+        }
+    }
+
+    private fun applyEqFallback() {
+        val e = eq ?: return
+        try {
+            val range = e.bandLevelRange
+            val lo = range[0].toInt()
+            val hi = range[1].toInt()
+            for (i in 0 until e.numberOfBands.toInt()) {
+                val f = (e.getCenterFreq(i.toShort()) / 1000).coerceAtLeast(1)
+                var best = 0
+                var bd = Double.MAX_VALUE
+                for (b in 0 until 10) {
+                    val d = abs(ln(f.toDouble() / EQ_FREQS[b]))
+                    if (d < bd) { bd = d; best = b }
+                }
+                e.setBandLevel(i.toShort(), (bandLevels.getOrNull(best) ?: 0).coerceIn(lo, hi).toShort())
+            }
+        } catch (t: Throwable) {
+        }
+    }
+
+    private fun applyEffects() {
+        applyDp()
+        applyEqFallback()
+    }
+
     private fun releaseEffects() {
-        try { eq?.release() } catch (e: Exception) { }
-        try { bass?.release() } catch (e: Exception) { }
+        try { dp?.release() } catch (e: Throwable) { }
+        try { eq?.release() } catch (e: Throwable) { }
+        try { bass?.release() } catch (e: Throwable) { }
+        dp = null
         eq = null
         bass = null
+        attachedSession = -1
     }
 
     private fun saveEq() {
-        prefs.edit().putString("eq_levels", bandLevels.joinToString(",")).apply()
+        prefs.edit().putString("eq10", bandLevels.joinToString(",")).apply()
     }
 
     fun changeEq(on: Boolean) {
         eqEnabled = on
-        try { eq?.setEnabled(on) } catch (e: Exception) { }
+        try { dp?.setEnabled(on) } catch (e: Throwable) { }
+        try { eq?.setEnabled(on) } catch (e: Throwable) { }
         prefs.edit().putBoolean("eq_on", on).apply()
     }
 
     fun setBand(b: Int, level: Int) {
         if (b !in bandLevels.indices) return
-        bandLevels[b] = level
-        try { eq?.setBandLevel(b.toShort(), level.toShort()) } catch (e: Exception) { }
+        bandLevels[b] = level.coerceIn(-1200, 1200)
+        applyEffects()
         saveEq()
     }
 
     fun usePreset(p: Int) {
-        val e = eq ?: return
-        try {
-            e.usePreset(p.toShort())
-            for (b in bandLevels.indices) bandLevels[b] = e.getBandLevel(b.toShort()).toInt()
-            saveEq()
-        } catch (ex: Exception) { }
+        val preset = EQ_PRESETS.getOrNull(p) ?: return
+        for (b in 0 until 10) bandLevels[b] = preset.second[b] * 100
+        applyEffects()
+        saveEq()
     }
 
     fun setBass(v: Int) {
@@ -451,5 +563,15 @@ object Engine {
             }
         } catch (e: Exception) { }
         prefs.edit().putInt("bass", v).apply()
+    }
+
+    /** Thoát hoàn toàn: dừng nhạc, dừng dịch vụ, đóng app và kết thúc tiến trình. */
+    fun quit(activity: android.app.Activity) {
+        try { player.stop() } catch (e: Exception) { }
+        ScreenCapture.stop()
+        releaseEffects()
+        try { app.stopService(Intent(app, MusicService::class.java)) } catch (e: Exception) { }
+        activity.finishAndRemoveTask()
+        main.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 900)
     }
 }

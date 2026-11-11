@@ -3,6 +3,11 @@ package com.hud.aamusic
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -120,7 +125,7 @@ fun EqScreen() {
             Text("Âm thanh", fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Switch(checked = Engine.eqEnabled, onCheckedChange = { Engine.changeEq(it) })
         }
-        Section("Equalizer") {
+        Section("Equalizer 10 dải") {
             if (info == null) {
                 Text("Hãy phát một bài hát để equalizer sẵn sàng.", color = Dim)
             } else {
@@ -134,14 +139,14 @@ fun EqScreen() {
                     info.freqsHz.forEachIndexed { b, hz ->
                         val lv = Engine.bandLevels.getOrNull(b) ?: 0
                         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${lv / 100} dB", fontSize = 12.sp, color = AccentA)
+                            Text("${lv / 100}", fontSize = 10.sp, color = AccentA)
                             VSlider(
                                 value = lv.toFloat(), min = info.min.toFloat(), max = info.max.toFloat(),
                                 onChange = { Engine.setBand(b, it.toInt()) },
-                                modifier = Modifier.height(230.dp).width(52.dp)
+                                modifier = Modifier.height(210.dp).width(30.dp)
                             )
                             Text(
-                                if (hz >= 1000) "%.1fk".format(hz / 1000f) else "$hz",
+                                if (hz >= 1000) "${hz / 1000}k" else "$hz",
                                 fontSize = 12.sp, color = Dim
                             )
                         }
@@ -189,6 +194,22 @@ fun SettingsScreen() {
     var tts by remember { mutableStateOf(prefs.getBoolean("tts", true)) }
     var online by remember { mutableStateOf(prefs.getBoolean("online", true)) }
     var locAlways by remember { mutableStateOf(prefs.getInt("loc_mode", 0) == 1) }
+    var lockLyrics by remember { mutableStateOf(prefs.getBoolean("lock_lyrics", true)) }
+    var capEnabled by remember { mutableStateOf(prefs.getBoolean("cap_enabled", false)) }
+    var capPkg by remember { mutableStateOf(prefs.getString("cap_pkg", "") ?: "") }
+    var capLabel by remember { mutableStateOf(prefs.getString("cap_label", "") ?: "") }
+    var capX by remember { mutableStateOf(prefs.getInt("cap_x", 4)) }
+    var capY by remember { mutableStateOf(prefs.getInt("cap_y", 8)) }
+    var capS by remember { mutableStateOf(prefs.getInt("cap_size", 92)) }
+    var pickingApp by remember { mutableStateOf(false) }
+    var rootInfo by remember { mutableStateOf("") }
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) treeToPath(uri)?.let { Lists.addFolder(it) }
+    }
+    fun setCrop(x: Int, y: Int, sz: Int) {
+        capX = x; capY = y; capS = sz
+        prefs.edit().putInt("cap_x", x).putInt("cap_y", y).putInt("cap_size", sz).apply()
+    }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
     var urlA by remember { mutableStateOf(DataSync.urlAlerts()) }
     var urlS by remember { mutableStateOf(DataSync.urlSigns()) }
@@ -288,6 +309,69 @@ fun SettingsScreen() {
             }
         }
 
+        Section("Màn hình khoá và thông báo") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = lockLyrics, onCheckedChange = { lockLyrics = it; prefs.edit().putBoolean("lock_lyrics", it).apply() })
+                Text("Hiện dòng lời đang hát trên màn hình khoá và thông báo", fontSize = 14.sp)
+            }
+            Text("Nút \"Lời\" trên thông báo mở lời bài hát toàn màn hình (hiện được trên màn hình khoá).", fontSize = 12.sp, color = Dim)
+        }
+
+        Section("Thư mục nhạc") {
+            Text(
+                if (Lists.folders.isEmpty()) "Đang hiện nhạc từ toàn bộ máy." else "Chỉ hiện nhạc trong các thư mục:",
+                fontSize = 13.sp, color = Dim
+            )
+            Lists.folders.forEach { fd ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(fd, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text("✕", color = AccentB, modifier = Modifier.pressable { Lists.removeFolder(fd) }.padding(10.dp))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GradBtn("＋ Thêm thư mục") { pickFolder.launch(null) }
+                if (Lists.hidden.isNotEmpty()) SoftBtn("Hiện lại ${Lists.hidden.size} bài đã ẩn") { Lists.unhideAll() }
+            }
+        }
+
+        Section("Hình Wyn / DiOTO thay ảnh bìa (thử nghiệm, cần root)") {
+            Text(
+                "App được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên Android Auto. " +
+                    "Giọng nói của app vẫn hoạt động bình thường. Khi ngắt kết nối, app đó sẽ bị đóng.",
+                fontSize = 12.sp, color = Dim
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = capEnabled, onCheckedChange = { capEnabled = it; prefs.edit().putBoolean("cap_enabled", it).apply() })
+                Text("Bật khi kết nối Android Auto", fontSize = 14.sp)
+            }
+            Text("App: " + (if (capPkg.isEmpty()) "(chưa chọn)" else "$capLabel ($capPkg)"), fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GradBtn("Chọn app") { pickingApp = true }
+                SoftBtn("Kiểm tra root") {
+                    scope.launch {
+                        rootInfo = "Đang kiểm tra..."
+                        val r = withContext(Dispatchers.IO) { Root.run("id").second.trim() }
+                        rootInfo = r.ifBlank { "Không có phản hồi (chưa cấp quyền root cho app?)" }
+                    }
+                }
+            }
+            if (rootInfo.isNotEmpty()) Text(rootInfo, fontSize = 12.sp, color = AccentA)
+            Text("Vùng cắt (hình vuông) lấy từ giao diện app:", fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SoftBtn("Mẫu Wyn") { setCrop(26, 14, 72) }
+                SoftBtn("Mẫu DiOTO") { setCrop(4, 8, 92) }
+            }
+            CropSlider("Trái", capX, 0, 100) { capX = it; prefs.edit().putInt("cap_x", it).apply() }
+            CropSlider("Trên", capY, 0, 100) { capY = it; prefs.edit().putInt("cap_y", it).apply() }
+            CropSlider("Cỡ", capS, 20, 100) { capS = it; prefs.edit().putInt("cap_size", it).apply() }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GradBtn("Thử chụp") { ScreenCapture.start(ctx, capPkg, true) }
+                SoftBtn("Dừng") { ScreenCapture.manual = false; ScreenCapture.stop() }
+            }
+            Text(Diag.cap, fontSize = 12.sp, color = AccentA)
+            CapPreview(capX, capY, capS)
+        }
+
         Section("Radio online (mỗi dòng: Tên|URL)") {
             OutlinedTextField(value = streams, onValueChange = { streams = it }, minLines = 3, modifier = Modifier.fillMaxWidth())
             SoftBtn("Lưu radio") { prefs.edit().putString("streams", streams).apply() }
@@ -309,6 +393,19 @@ fun SettingsScreen() {
         ) { Text("⏻  Thoát hoàn toàn", color = Color(0xFFFF6B81), fontWeight = FontWeight.Bold) }
 
         Spacer(Modifier.height(170.dp))
+    }
+    if (pickingApp) {
+        AppPicker(
+            onPick = { pkg, label ->
+                capPkg = pkg
+                capLabel = label
+                prefs.edit().putString("cap_pkg", pkg).putString("cap_label", label).apply()
+                val l = (label + pkg).lowercase()
+                if ("wyn" in l) setCrop(26, 14, 72) else if ("dioto" in l) setCrop(4, 8, 92)
+                pickingApp = false
+            },
+            onDismiss = { pickingApp = false }
+        )
     }
 }
 
@@ -385,7 +482,10 @@ fun ScanScreen() {
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(CardC).padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(p.label, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            p.label, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { Engine.songById(p.songId)?.let { Engine.editing = it } }
+                        )
                         Text(p.summary(), color = Dim, fontSize = 12.sp)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GradBtn("Áp dụng") { LibraryCheck.apply(p) }
@@ -398,12 +498,16 @@ fun ScanScreen() {
                 item { Text("Bài còn thiếu thông tin (${bad.size})", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
                 items(bad.take(300)) { st ->
                     val song = Engine.songById(st.id)
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardC).padding(10.dp)) {
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardC)
+                            .clickable { song?.let { Engine.editing = it } }.padding(10.dp)
+                    ) {
                         Text(
-                            song?.let { Engine.title(it) } ?: st.title.ifBlank { "(không tên)" },
+                            java.io.File(st.path).name,
                             maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
                         Text("Thiếu: " + st.missing().joinToString(", "), color = AccentB, fontSize = 12.sp)
+                        Text("Chạm để sửa hoặc tìm thủ công", color = Dim, fontSize = 11.sp)
                     }
                 }
             }
@@ -429,6 +533,11 @@ fun TagEditor(s: Song) {
     var picked by remember(s.id) { mutableStateOf<ByteArray?>(null) }
     var status by remember(s.id) { mutableStateOf("") }
     var hasCover by remember(s.id) { mutableStateOf(false) }
+    var query by remember(s.id) {
+        mutableStateOf(
+            if (s.path.isNotEmpty()) LibraryCheck.guess(s.path).let { "${it.second} ${it.first}".trim() } else Engine.title(s)
+        )
+    }
 
     LaunchedEffect(s.id) {
         val info = withContext(Dispatchers.IO) { if (s.path.isNotEmpty()) Tags.read(s.path) else null }
@@ -438,6 +547,7 @@ fun TagEditor(s: Song) {
             if (info.album.isNotBlank()) album = info.album
             lyricsText = info.lyrics
             hasCover = info.hasCover
+            if (info.title.isNotBlank()) query = "${info.title} ${info.artist}".trim()
         }
     }
 
@@ -472,10 +582,14 @@ fun TagEditor(s: Song) {
                     fontSize = 12.sp, color = Dim
                 )
 
+                OutlinedTextField(
+                    query, { query = it }, label = { Text("Từ khoá tìm (sửa tay nếu không ra)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
                 SoftBtn("🔎 Tìm tên, album, bìa trên internet") {
                     scope.launch {
                         status = "Đang tìm..."
-                        val r = withContext(Dispatchers.IO) { Net.searchTracks("$title $artist".trim()) }
+                        val r = withContext(Dispatchers.IO) { Net.searchTracks(query.trim()) }
                         results = r
                         status = if (r.isEmpty()) "Không tìm thấy (hoặc không có mạng)" else "Chọn một kết quả:"
                     }
@@ -527,4 +641,193 @@ fun TagEditor(s: Song) {
         },
         dismissButton = { TextButton(onClick = { Engine.editing = null }) { Text("Đóng") } }
     )
+}
+
+
+// ------------------------------------------------------------------ Thành phần bổ sung
+
+private fun treeToPath(uri: Uri): String? = try {
+    val id = DocumentsContract.getTreeDocumentId(uri)
+    val parts = id.split(":", limit = 2)
+    val base = if (parts[0] == "primary") "/storage/emulated/0" else "/storage/${parts[0]}"
+    val rel = parts.getOrNull(1) ?: ""
+    if (rel.isEmpty()) base else "$base/$rel"
+} catch (e: Exception) {
+    null
+}
+
+@Composable
+fun CropSlider(label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("$label $value%", fontSize = 12.sp, color = Dim, modifier = Modifier.width(80.dp))
+        Slider(
+            value = value.toFloat(), onValueChange = { onChange(it.toInt()) },
+            valueRange = min.toFloat()..max.toFloat(), modifier = Modifier.weight(1f),
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = AccentA, inactiveTrackColor = Card2)
+        )
+    }
+}
+
+/** Hình chụp mới nhất từ app, kèm khung vuông là vùng sẽ dùng làm ảnh bìa. */
+@Composable
+fun CapPreview(xp: Int, yp: Int, sp: Int) {
+    val bmp = ScreenCapture.preview
+    if (bmp == null) {
+        Text("Chưa có hình. Bấm \"Thử chụp\" để xem trước.", color = Dim, fontSize = 12.sp)
+    } else {
+        Box(Modifier.fillMaxWidth(0.55f).aspectRatio(bmp.width.toFloat() / bmp.height)) {
+            Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
+            Canvas(Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val cw = w * sp / 100f
+                val x0 = (w * xp / 100f).coerceIn(0f, (w - cw).coerceAtLeast(0f))
+                val y0 = (h * yp / 100f).coerceIn(0f, (h - cw).coerceAtLeast(0f))
+                drawRect(AccentA, Offset(x0, y0), Size(cw, cw), style = Stroke(width = 3.dp.toPx()))
+            }
+        }
+    }
+}
+
+@Composable
+fun AppPicker(onPick: (String, String) -> Unit, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    var apps by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var q by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        apps = withContext(Dispatchers.IO) {
+            val pm = ctx.packageManager
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            pm.queryIntentActivities(i, 0)
+                .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+                .distinctBy { it.first }
+                .sortedBy { it.second.lowercase() }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardC,
+        title = { Text("Chọn app", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                OutlinedTextField(q, { q = it }, singleLine = true, placeholder = { Text("Tìm app...") }, modifier = Modifier.fillMaxWidth())
+                LazyColumn(Modifier.height(320.dp)) {
+                    items(apps.filter { q.isBlank() || it.second.contains(q, true) || it.first.contains(q, true) }) { a ->
+                        Text(
+                            "${a.second}\n${a.first}", fontSize = 13.sp,
+                            modifier = Modifier.fillMaxWidth().clickable { onPick(a.first, a.second) }.padding(vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Đóng") } }
+    )
+}
+
+@Composable
+fun PlaylistPicker(s: Song) {
+    var name by remember(s.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { Lists.pickFor = null },
+        containerColor = CardC,
+        title = { Text("Thêm vào playlist", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Lists.playlists.keys.forEach { n ->
+                    SoftBtn("$n  (${Lists.playlists[n]?.size ?: 0})", Modifier.fillMaxWidth()) {
+                        Lists.addTo(n, s)
+                        Lists.pickFor = null
+                    }
+                }
+                OutlinedTextField(name, { name = it }, label = { Text("Hoặc tạo playlist mới") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                GradBtn("Tạo và thêm bài") {
+                    if (name.isNotBlank()) {
+                        Lists.createPlaylist(name, s)
+                        Lists.pickFor = null
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = { Lists.pickFor = null }) { Text("Đóng") } }
+    )
+}
+
+@Composable
+fun NewPlaylistDialog() {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { Lists.creatingPlaylist = false },
+        containerColor = CardC,
+        title = { Text("Playlist mới", fontWeight = FontWeight.Bold) },
+        text = { OutlinedTextField(name, { name = it }, label = { Text("Tên playlist") }, singleLine = true, modifier = Modifier.fillMaxWidth()) },
+        confirmButton = {
+            TextButton(onClick = { Lists.createPlaylist(name); Lists.creatingPlaylist = false }) { Text("Tạo", color = AccentA) }
+        },
+        dismissButton = { TextButton(onClick = { Lists.creatingPlaylist = false }) { Text("Hủy") } }
+    )
+}
+
+@Composable
+fun DeleteConfirm(s: Song) {
+    val scope = rememberCoroutineScope()
+    var msg by remember(s.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { Lists.confirmDelete = null },
+        containerColor = CardC,
+        title = { Text("Xóa file khỏi máy?", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(Engine.title(s), fontWeight = FontWeight.SemiBold)
+                Text(s.path, fontSize = 11.sp, color = Dim)
+                Text("File sẽ bị xóa vĩnh viễn và không thể khôi phục.", fontSize = 13.sp, color = AccentB)
+                if (msg.isNotEmpty()) Text(msg, fontSize = 12.sp, color = AccentA)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                scope.launch {
+                    val err = withContext(Dispatchers.IO) { Engine.deleteSong(s) }
+                    if (err == null) Lists.confirmDelete = null else msg = err
+                }
+            }) { Text("Xóa", color = AccentB) }
+        },
+        dismissButton = { TextButton(onClick = { Lists.confirmDelete = null }) { Text("Hủy") } }
+    )
+}
+
+/** Lời bài hát toàn màn hình, dùng trong LyricsActivity (hiện được trên màn hình khoá). */
+@Composable
+fun LockLyricsScreen(onClose: () -> Unit) {
+    LaunchedEffect(Unit) {
+        while (true) {
+            Engine.tick()
+            delay(250)
+        }
+    }
+    val s = Engine.current
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                s?.let { Engine.title(it) } ?: "AA Music", fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Text(s?.let { Engine.artist(it) } ?: "", color = Dim, fontSize = 13.sp)
+            Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) { LyricsView() }
+            Row(
+                Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NeonButton(52.dp, false, { Engine.player.seekToPreviousMediaItem() }) { IconSkip(false, Color.White, 24.dp) }
+                PlayOrb(Engine.isPlaying) { Engine.togglePlay() }
+                NeonButton(52.dp, false, { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }) {
+                    IconSkip(true, Color.White, 24.dp)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            SoftBtn("Đóng") { onClose() }
+        }
+    }
 }
