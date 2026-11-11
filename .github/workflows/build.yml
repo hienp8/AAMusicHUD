@@ -1,4 +1,4 @@
-name: Build APK
+name: Build AA Music
 
 on:
   push:
@@ -20,11 +20,22 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon 
-    
+      - name: Build release APK
+        shell: bash
+        run: gradle assembleRelease --no-daemon --console=plain 2>&1 | tee build.log
+
+      - name: Show errors
+        if: failure()
+        shell: bash
+        run: grep -E "^e: |What went wrong|error:|Could not resolve" -A4 build.log | head -100
+
+      - name: Rename APK
+        shell: bash
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk "out/AA Music.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AAMusicHud-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: AA-Music
+          path: out/AA Music.apk
