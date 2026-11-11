@@ -22,13 +22,8 @@ jobs:
 
       - name: Build release APK
         shell: bash
-        run: gradle assembleRelease --no-daemon --console=plain 2>&1 | tee build.log
-
-      - name: Show errors
-        if: failure()
-        shell: bash
-        run: grep -E "^e: |What went wrong|error:|Could not resolve" -A4 build.log | head -100
-
+        run: gradle assembleRelease --no-daemon 
+      
       - name: Rename APK
         shell: bash
         run: |
