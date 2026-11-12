@@ -41,6 +41,12 @@ class TrafficMonitor(
     private var limTime = 0L
     private var limBusy = false
 
+    // Goong Speed Limit API (tuỳ chọn)
+    private var goongLimit: Int? = null
+    private var goongLoc: Location? = null
+    private var goongAt = 0L
+    private var goongBusy = false
+
     private var signLimit: Int? = null
     private var signAt = 0L
 
@@ -115,6 +121,12 @@ class TrafficMonitor(
             if (ll == null || loc.distanceTo(ll) > 120f || now - limTime > 30000L) fetchLimit(loc)
         }
 
+        val gkey = Engine.prefs.getString("goong_key", "") ?: ""
+        if (gkey.isNotBlank() && !goongBusy && kmh >= 5) {
+            val g0 = goongLoc
+            if (g0 == null || loc.distanceTo(g0) > 150f || now - goongAt > 30000L) fetchGoong(loc, gkey)
+        }
+
         val r = FloatArray(1)
         for (s in localSigns) {
             if (s.limit == null || !near(loc, s)) continue
@@ -157,7 +169,8 @@ class TrafficMonitor(
         }
 
         val fromSign = if (now - signAt < 300000L) signLimit else null
-        val eff = fromSign ?: osmLimit
+        val fromGoong = if (now - goongAt < 60000L) goongLimit else null
+        val eff = fromSign ?: fromGoong ?: osmLimit
 
         if (eff != null && kmh > eff + 3 && now - lastOver > 30000L) {
             lastOver = now
@@ -215,6 +228,22 @@ class TrafficMonitor(
                     Diag.osmLim = "OSM giới hạn đường: OK (${res.log}), " +
                         (osmLimit?.let { "$it km/h" } ?: "đoạn đường này chưa có dữ liệu maxspeed")
                 }
+            }
+        }
+    }
+
+    private fun fetchGoong(loc: Location, key: String) {
+        goongBusy = true
+        goongLoc = Location(loc)
+        goongAt = SystemClock.elapsedRealtime()
+        val bearing = if (loc.hasBearing() && loc.speed > 2f) loc.bearing else null
+        io.execute {
+            val res = Goong.query(loc.latitude, loc.longitude, bearing, key)
+            main.post {
+                goongBusy = false
+                goongLimit = res.first
+                goongAt = SystemClock.elapsedRealtime()
+                Diag.goong = res.second
             }
         }
     }

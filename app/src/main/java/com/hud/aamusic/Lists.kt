@@ -61,6 +61,7 @@ object Lists {
         val k = key(s)
         favorites = if (k in favorites) favorites - k else favorites + k
         save()
+        Engine.onExternalChange?.invoke()
     }
 
     fun favSongs(): List<Song> {

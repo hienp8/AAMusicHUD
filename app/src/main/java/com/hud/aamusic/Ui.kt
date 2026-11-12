@@ -732,16 +732,6 @@ fun NowPlayingScreen() {
                     }
                 }
             }
-            val repText = when (Engine.repeatMode) {
-                Player.REPEAT_MODE_ALL -> "tất cả"
-                Player.REPEAT_MODE_ONE -> "một bài"
-                else -> "tắt"
-            }
-            Text(
-                "Ngẫu nhiên: ${if (Engine.shuffle) "BẬT" else "tắt"}   •   Lặp: $repText",
-                color = if (Engine.shuffle || Engine.repeatMode != Player.REPEAT_MODE_OFF) AccentA else Dim,
-                fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp)
-            )
         }
     }
 }
@@ -756,27 +746,56 @@ fun LyricsView() {
         ) {
             Text(
                 if (Engine.plainLyrics.isNotEmpty()) Engine.plainLyrics
-                else "Chưa có lời.\nBấm ✏ Sửa thông tin, rồi chọn Tải lời bài hát.",
+                else "Chưa có lời.\nVào menu ⋮ của bài, chọn Sửa thông tin để tải hoặc dán lời.",
                 color = if (Engine.plainLyrics.isNotEmpty()) Color.White else Dim,
                 textAlign = TextAlign.Center, lineHeight = 26.sp
             )
         }
         return
     }
-    val pos = Engine.positionMs
+    val off = Engine.lyricOffsetMs
+    val pos = Engine.positionMs + off
     val idx = lines.indexOfLast { it.timeMs <= pos + 250 }.coerceAtLeast(0)
     val state = rememberLazyListState()
     LaunchedEffect(idx) { state.animateScrollToItem((idx - 3).coerceAtLeast(0)) }
-    LazyColumn(Modifier.fillMaxSize(), state = state, horizontalAlignment = Alignment.CenterHorizontally) {
-        itemsIndexed(lines) { i, l ->
-            val cur = i == idx
-            Text(
-                l.text.ifEmpty { "♪" }, textAlign = TextAlign.Center,
-                fontSize = if (cur) 24.sp else 18.sp,
-                fontWeight = if (cur) FontWeight.Bold else FontWeight.Normal,
-                color = if (cur) AccentA else Color(0xFFB0B6C0),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).clickable { Engine.player.seekTo(l.timeMs) }
-            )
+    Column(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = state, horizontalAlignment = Alignment.CenterHorizontally) {
+            itemsIndexed(lines) { i, l ->
+                val cur = i == idx
+                Text(
+                    l.text.ifEmpty { "♪" }, textAlign = TextAlign.Center,
+                    fontSize = if (cur) 24.sp else 18.sp,
+                    fontWeight = if (cur) FontWeight.Bold else FontWeight.Normal,
+                    color = if (cur) AccentA else Color(0xFFB0B6C0),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                        .clickable { Engine.player.seekTo((l.timeMs - off).coerceAtLeast(0L)) }
+                )
+            }
         }
+        LyricOffsetBar()
+    }
+}
+
+/** Chỉnh lời sớm hơn (+) hoặc chậm hơn (−) cho khớp với bài; lưu riêng cho từng bài. */
+@Composable
+fun LyricOffsetBar() {
+    val off = Engine.lyricOffsetMs
+    val label = when {
+        off == 0 -> "Khớp gốc\n(+ sớm, − chậm)"
+        off > 0 -> "Lời sớm hơn %.1fs\n(chạm để đặt lại)".format(off / 1000f)
+        else -> "Lời chậm hơn %.1fs\n(chạm để đặt lại)".format(-off / 1000f)
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically
+    ) {
+        SoftBtn("−0,5") { Engine.adjustLyricOffset(-500) }
+        SoftBtn("−0,1") { Engine.adjustLyricOffset(-100) }
+        Text(
+            label, fontSize = 11.sp, color = AccentA, textAlign = TextAlign.Center, lineHeight = 14.sp,
+            modifier = Modifier.weight(1f).clickable { Engine.resetLyricOffset() }
+        )
+        SoftBtn("+0,1") { Engine.adjustLyricOffset(100) }
+        SoftBtn("+0,5") { Engine.adjustLyricOffset(500) }
     }
 }

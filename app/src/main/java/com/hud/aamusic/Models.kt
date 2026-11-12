@@ -73,6 +73,7 @@ object Diag {
     var test by mutableStateOf("")
     var sync by mutableStateOf("Dữ liệu từ URL: chưa cập nhật")
     var cap by mutableStateOf("Chụp màn hình: chưa bật")
+    var goong by mutableStateOf("Goong: chưa dùng")
 }
 
 object Lrc {

@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.Normalizer
 
 /** Tìm thông tin bài hát (iTunes Search API) và lời bài hát (LRCLIB). Không cần API key. */
 object Net {
@@ -54,6 +55,40 @@ object Net {
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    private fun fold(x: String): String =
+        Normalizer.normalize(x, Normalizer.Form.NFD).replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .replace('đ', 'd').replace('Đ', 'D')
+
+    /** Tìm rộng hơn: thử nhiều biến thể từ khoá (không dấu, bớt từ) và xếp theo độ giống. */
+    fun searchLoose(q: String): List<Track> {
+        val clean = q.trim()
+        if (clean.isEmpty()) return emptyList()
+        val noAccent = fold(clean)
+        val words = noAccent.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val variants = LinkedHashSet<String>()
+        variants += clean
+        variants += noAccent
+        if (words.size > 2) {
+            variants += words.take(2).joinToString(" ")
+            variants += words.takeLast(2).joinToString(" ")
+        }
+        if (words.size > 1) variants += words.first()
+        val seen = HashSet<String>()
+        val out = ArrayList<Track>()
+        for (v in variants) {
+            for (t in searchTracks(v)) {
+                if (seen.add("${t.title}|${t.artist}")) out += t
+            }
+            if (out.size >= 14) break
+        }
+        val qw = words.map { it.lowercase() }.toSet()
+        fun score(t: Track): Int {
+            val tw = fold("${t.title} ${t.artist}").lowercase().split(Regex("\\s+")).toSet()
+            return qw.count { it in tw }
+        }
+        return out.sortedByDescending { score(it) }.take(12)
     }
 
     private fun toLyr(o: JSONObject): Lyr? {

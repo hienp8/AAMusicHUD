@@ -88,7 +88,7 @@ object LibraryCheck {
     private fun norm(s: String): String =
         Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(Regex("[^a-z0-9]"), "")
 
-    private fun similar(a: String, b: String): Boolean {
+    fun similar(a: String, b: String): Boolean {
         val x = norm(a)
         val y = norm(b)
         return x.isNotEmpty() && y.isNotEmpty() && (x.contains(y) || y.contains(x))

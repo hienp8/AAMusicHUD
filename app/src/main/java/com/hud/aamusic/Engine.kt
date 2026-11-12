@@ -90,6 +90,13 @@ object Engine {
 
     val prefs get() = app.getSharedPreferences("aa", Context.MODE_PRIVATE)
 
+    /** Service đăng ký để cập nhật thông báo khi yêu thích / ngẫu nhiên / lặp thay đổi. */
+    var onExternalChange: (() -> Unit)? = null
+
+    // ---- Lời: chỉnh lệch thời gian theo từng bài (dương = lời hiện sớm hơn) ----
+    var lyricOffsetMs by mutableIntStateOf(0)
+    private val offsets = HashMap<String, Int>()
+
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) { Engine.isPlaying = isPlaying }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { refreshCurrent() }
@@ -101,8 +108,8 @@ object Engine {
             }
         }
         override fun onAudioSessionIdChanged(audioSessionId: Int) { attachEffects(audioSessionId) }
-        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) { shuffle = shuffleModeEnabled }
-        override fun onRepeatModeChanged(repeatMode: Int) { Engine.repeatMode = repeatMode }
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) { shuffle = shuffleModeEnabled; onExternalChange?.invoke() }
+        override fun onRepeatModeChanged(repeatMode: Int) { Engine.repeatMode = repeatMode; onExternalChange?.invoke() }
     }
 
     fun init(ctx: Context) {
@@ -124,6 +131,10 @@ object Engine {
         for (i in 0 until 10) bandLevels.add(if (saved.size == 10) saved[i].coerceIn(-1200, 1200) else 0)
         loadEdits()
         Lists.load()
+        try {
+            val o = JSONObject(prefs.getString("lyric_offsets", "{}") ?: "{}")
+            for (k in o.keys()) offsets[k] = o.optInt(k, 0)
+        } catch (e: Exception) { }
     }
 
     // ---------------- Thư viện ----------------
@@ -277,9 +288,22 @@ object Engine {
         val s = if (id == null) null else (index[id] ?: streamIndex[id])
         if (s?.id != current?.id) {
             current = s
+            lyricOffsetMs = s?.let { offsets[Lists.key(it)] } ?: 0
             loadLyrics(s)
         }
     }
+
+    fun adjustLyricOffset(delta: Int) {
+        val s = current ?: return
+        val v = (lyricOffsetMs + delta).coerceIn(-15000, 15000)
+        lyricOffsetMs = v
+        if (v == 0) offsets.remove(Lists.key(s)) else offsets[Lists.key(s)] = v
+        val o = JSONObject()
+        for ((k, x) in offsets) o.put(k, x)
+        prefs.edit().putString("lyric_offsets", o.toString()).apply()
+    }
+
+    fun resetLyricOffset() { adjustLyricOffset(-lyricOffsetMs) }
 
     // ---------------- Xoá bài ----------------
 

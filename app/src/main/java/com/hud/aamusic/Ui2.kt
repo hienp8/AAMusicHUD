@@ -4,6 +4,12 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.Surface
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import java.net.URLEncoder
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.graphics.asImageBitmap
@@ -195,6 +201,9 @@ fun SettingsScreen() {
     var online by remember { mutableStateOf(prefs.getBoolean("online", true)) }
     var locAlways by remember { mutableStateOf(prefs.getInt("loc_mode", 0) == 1) }
     var lockLyrics by remember { mutableStateOf(prefs.getBoolean("lock_lyrics", true)) }
+    var notifExtra by remember { mutableStateOf(prefs.getString("notif_extra", "shuffle") ?: "shuffle") }
+    var goongKey by remember { mutableStateOf(prefs.getString("goong_key", "") ?: "") }
+    var goongTest by remember { mutableStateOf("") }
     var capEnabled by remember { mutableStateOf(prefs.getBoolean("cap_enabled", false)) }
     var capPkg by remember { mutableStateOf(prefs.getString("cap_pkg", "") ?: "") }
     var capLabel by remember { mutableStateOf(prefs.getString("cap_label", "") ?: "") }
@@ -309,12 +318,40 @@ fun SettingsScreen() {
             }
         }
 
+        Section("Goong Speed Limit API (tuỳ chọn)") {
+            Text(
+                "Tra giới hạn tốc độ theo vị trí và hướng đi từ Goong. Cần API key đã được Goong bật dịch vụ Speed Limit " +
+                    "(liên hệ Goong để được cấp). Để trống nếu không dùng.",
+                fontSize = 12.sp, color = Dim
+            )
+            OutlinedTextField(
+                goongKey, { goongKey = it; prefs.edit().putString("goong_key", it.trim()).apply() },
+                label = { Text("Goong API key") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+            )
+            SoftBtn("Kiểm tra key") {
+                scope.launch {
+                    goongTest = "Đang kiểm tra..."
+                    goongTest = withContext(Dispatchers.IO) { Goong.query(21.03055, 105.80106, null, goongKey.trim()).second }
+                }
+            }
+            if (goongTest.isNotEmpty()) Text(goongTest, fontSize = 12.sp, color = AccentA)
+            Text(Diag.goong, fontSize = 12.sp, color = Dim)
+        }
+
         Section("Màn hình khoá và thông báo") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = lockLyrics, onCheckedChange = { lockLyrics = it; prefs.edit().putBoolean("lock_lyrics", it).apply() })
                 Text("Hiện dòng lời đang hát trên màn hình khoá và thông báo", fontSize = 14.sp)
             }
-            Text("Nút \"Lời\" trên thông báo mở lời bài hát toàn màn hình (hiện được trên màn hình khoá).", fontSize = 12.sp, color = Dim)
+            Text("Chạm vào thông báo khi máy đang khoá sẽ mở lời bài hát toàn màn hình.", fontSize = 12.sp, color = Dim)
+            Text(
+                "Thông báo có ❤, ⏮, ⏯, ⏭ và một nút phụ (Android chỉ cho tối đa 5 nút). Chọn nút phụ:",
+                fontSize = 12.sp, color = Dim
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("🔀 Ngẫu nhiên", notifExtra == "shuffle") { notifExtra = "shuffle"; prefs.edit().putString("notif_extra", "shuffle").apply() }
+                Pill("🔁 Lặp lại", notifExtra == "repeat") { notifExtra = "repeat"; prefs.edit().putString("notif_extra", "repeat").apply() }
+            }
         }
 
         Section("Thư mục nhạc") {
@@ -424,6 +461,16 @@ fun ScanScreen() {
     val busy = LibraryCheck.scanning || LibraryCheck.suggesting || LibraryCheck.applying
     val states = LibraryCheck.states
     val bad = states.filter { it.ok && it.missing().isNotEmpty() }
+    var filter by remember { mutableStateOf("all") }
+    val shown = when (filter) {
+        "title" -> states.filter { it.ok && it.title.isBlank() }
+        "artist" -> states.filter { it.ok && it.artist.isBlank() }
+        "album" -> states.filter { it.ok && it.album.isBlank() }
+        "cover" -> states.filter { it.ok && !it.hasCover }
+        "lyric0" -> states.filter { it.ok && it.lyricKind == 0 }
+        "lyric1" -> states.filter { it.ok && it.lyricKind == 1 }
+        else -> bad
+    }
 
     Column(Modifier.fillMaxSize().background(Bg).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -460,12 +507,13 @@ fun ScanScreen() {
         if (states.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Pill("Thiếu tên ${states.count { it.ok && it.title.isBlank() }}", false) {}
-                Pill("Thiếu nghệ sĩ ${states.count { it.ok && it.artist.isBlank() }}", false) {}
-                Pill("Thiếu album ${states.count { it.ok && it.album.isBlank() }}", false) {}
-                Pill("Thiếu bìa ${states.count { it.ok && !it.hasCover }}", false) {}
-                Pill("Thiếu lời ${states.count { it.ok && it.lyricKind == 0 }}", false) {}
-                Pill("Chưa đồng bộ ${states.count { it.ok && it.lyricKind == 1 }}", false) {}
+                Pill("Tất cả ${bad.size}", filter == "all") { filter = "all" }
+                Pill("Thiếu tên ${states.count { it.ok && it.title.isBlank() }}", filter == "title") { filter = if (filter == "title") "all" else "title" }
+                Pill("Thiếu nghệ sĩ ${states.count { it.ok && it.artist.isBlank() }}", filter == "artist") { filter = if (filter == "artist") "all" else "artist" }
+                Pill("Thiếu album ${states.count { it.ok && it.album.isBlank() }}", filter == "album") { filter = if (filter == "album") "all" else "album" }
+                Pill("Thiếu bìa ${states.count { it.ok && !it.hasCover }}", filter == "cover") { filter = if (filter == "cover") "all" else "cover" }
+                Pill("Chưa có lời ${states.count { it.ok && it.lyricKind == 0 }}", filter == "lyric0") { filter = if (filter == "lyric0") "all" else "lyric0" }
+                Pill("Có lời, chưa đồng bộ ${states.count { it.ok && it.lyricKind == 1 }}", filter == "lyric1") { filter = if (filter == "lyric1") "all" else "lyric1" }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -494,9 +542,9 @@ fun ScanScreen() {
                     }
                 }
             }
-            if (bad.isNotEmpty()) {
-                item { Text("Bài còn thiếu thông tin (${bad.size})", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
-                items(bad.take(300)) { st ->
+            if (shown.isNotEmpty()) {
+                item { Text("Danh sách (${shown.size} bài)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+                items(shown.take(300)) { st ->
                     val song = Engine.songById(st.id)
                     Column(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardC)
@@ -522,6 +570,7 @@ fun TagEditor(s: Song) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     val act = ctx as? MainActivity
+    val clip = LocalClipboardManager.current
     fun clean(x: String) = if (x.startsWith("Không rõ")) "" else x
     var title by remember(s.id) { mutableStateOf(Engine.title(s)) }
     var artist by remember(s.id) { mutableStateOf(clean(Engine.artist(s))) }
@@ -530,6 +579,7 @@ fun TagEditor(s: Song) {
     var lyricsDirty by remember(s.id) { mutableStateOf(false) }
     var results by remember(s.id) { mutableStateOf<List<Net.Track>>(emptyList()) }
     var artUrl by remember(s.id) { mutableStateOf<String?>(null) }
+    var artLink by remember(s.id) { mutableStateOf("") }
     var picked by remember(s.id) { mutableStateOf<ByteArray?>(null) }
     var status by remember(s.id) { mutableStateOf("") }
     var hasCover by remember(s.id) { mutableStateOf(false) }
@@ -556,93 +606,163 @@ fun TagEditor(s: Song) {
             val b = withContext(Dispatchers.IO) {
                 try { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } } catch (e: Exception) { null }
             }
-            if (b != null) { picked = b; artUrl = null; status = "Đã chọn ảnh bìa. Bấm Lưu để ghi vào file." }
+            if (b != null) { picked = b; artUrl = null; artLink = ""; status = "Đã chọn ảnh bìa. Bấm Lưu để ghi vào file." }
             else status = "Không đọc được ảnh"
         }
     }
 
-    AlertDialog(
+    fun openWeb(q: String, images: Boolean) {
+        val u = "https://www.google.com/search?" + (if (images) "tbm=isch&" else "") + "q=" + URLEncoder.encode(q, "UTF-8")
+        try {
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+        } catch (e: Exception) {
+            status = "Không mở được trình duyệt"
+        }
+    }
+
+    fun clipText(): String = clip.getText()?.text ?: ""
+    fun firstLine(x: String) = x.trim().lines().firstOrNull()?.trim() ?: ""
+
+    Dialog(
         onDismissRequest = { Engine.editing = null },
-        containerColor = CardC,
-        title = { Text("Sửa thông tin", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (!Tags.canWrite()) {
-                    Text("Chưa có quyền ghi vào file: thay đổi chỉ lưu trong app.", color = AccentB, fontSize = 12.sp)
-                    SoftBtn("Cấp quyền Quản lý tất cả tệp") { act?.requestAllFiles() }
-                }
-                OutlinedTextField(title, { title = it }, label = { Text("Tên bài") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(artist, { artist = it }, label = { Text("Nghệ sĩ") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(album, { album = it }, label = { Text("Album") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-
-                val lk = Lrc.kind(lyricsText)
-                Text(
-                    "Lời bài hát: " + when (lk) { 2 -> "có, đồng bộ theo thời gian"; 1 -> "có (không đồng bộ)"; else -> "chưa có" } +
-                        " • Bìa: " + if (hasCover || picked != null || artUrl != null) "có" else "chưa có",
-                    fontSize = 12.sp, color = Dim
-                )
-
-                OutlinedTextField(
-                    query, { query = it }, label = { Text("Từ khoá tìm (sửa tay nếu không ra)") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                SoftBtn("🔎 Tìm tên, album, bìa trên internet") {
-                    scope.launch {
-                        status = "Đang tìm..."
-                        val r = withContext(Dispatchers.IO) { Net.searchTracks(query.trim()) }
-                        results = r
-                        status = if (r.isEmpty()) "Không tìm thấy (hoặc không có mạng)" else "Chọn một kết quả:"
-                    }
-                }
-                results.take(8).forEach { t ->
-                    Text(
-                        "${t.title} — ${t.artist}\n${t.album}", fontSize = 13.sp,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Card2)
-                            .clickable {
-                                title = t.title; artist = t.artist; album = t.album; artUrl = t.artUrl; picked = null
-                                status = "Đã chọn. Bấm Lưu để ghi vào file (kèm bìa)."
-                            }.padding(10.dp)
-                    )
-                }
-
-                SoftBtn("🎤 Tải lời bài hát (LRCLIB)") {
-                    scope.launch {
-                        status = "Đang tải lời..."
-                        val r = withContext(Dispatchers.IO) { Net.lyrics(title, artist, album, s.durationMs / 1000) }
-                        if (r == null) {
-                            status = "Không tìm thấy lời bài hát này"
-                        } else {
-                            lyricsText = r.text
-                            lyricsDirty = true
-                            status = if (r.synced) "Đã tải lời đồng bộ. Bấm Lưu để ghi vào file." else "Chỉ có lời thường (không chạy theo nhạc). Bấm Lưu để ghi."
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Sửa thông tin", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    SoftBtn("Đóng") { Engine.editing = null }
+                    Spacer(Modifier.width(8.dp))
+                    GradBtn("Lưu vào file") {
+                        scope.launch {
+                            status = "Đang lưu..."
+                            val link = artLink.trim()
+                            val src = if (link.isNotEmpty()) link else artUrl
+                            var cover: ByteArray? = picked
+                            if (cover == null && src != null) {
+                                cover = withContext(Dispatchers.IO) { Net.bytes(src) }
+                                if (cover == null) status = "Không tải được ảnh từ link, các phần khác vẫn được lưu."
+                            }
+                            val err = withContext(Dispatchers.IO) {
+                                Engine.applyTags(s, title, artist, album, if (lyricsDirty) lyricsText else null, cover)
+                            }
+                            if (err == null) {
+                                Engine.editing = null
+                            } else {
+                                status = "Chưa ghi được vào file: $err. Đã lưu trong app."
+                            }
                         }
                     }
                 }
-                SoftBtn("🖼 Chọn ảnh bìa từ máy") { pick.launch("image/*") }
-                if (status.isNotEmpty()) Text(status, color = AccentA, fontSize = 13.sp)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                scope.launch {
-                    status = "Đang lưu..."
-                    val u = artUrl
-                    val cover: ByteArray? = picked ?: if (u != null) withContext(Dispatchers.IO) { Net.bytes(u) } else null
-                    val err = withContext(Dispatchers.IO) {
-                        Engine.applyTags(s, title, artist, album, if (lyricsDirty) lyricsText else null, cover)
+                Column(
+                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (!Tags.canWrite()) {
+                        Text("Chưa có quyền ghi vào file: thay đổi chỉ lưu trong app.", color = AccentB, fontSize = 12.sp)
+                        SoftBtn("Cấp quyền Quản lý tất cả tệp") { act?.requestAllFiles() }
                     }
-                    if (err == null) {
-                        Engine.editing = null
-                    } else {
-                        status = "Chưa ghi được vào file: $err. Đã lưu trong app."
-                    }
-                }
-            }) { Text("Lưu vào file", color = AccentA) }
-        },
-        dismissButton = { TextButton(onClick = { Engine.editing = null }) { Text("Đóng") } }
-    )
-}
+                    if (status.isNotEmpty()) Text(status, color = AccentA, fontSize = 13.sp)
 
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(title, { title = it }, label = { Text("Tên bài") }, singleLine = true, modifier = Modifier.weight(1f))
+                        SoftBtn("📋") { clipText().takeIf { it.isNotBlank() }?.let { title = firstLine(it) } }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(artist, { artist = it }, label = { Text("Nghệ sĩ") }, singleLine = true, modifier = Modifier.weight(1f))
+                        SoftBtn("📋") { clipText().takeIf { it.isNotBlank() }?.let { artist = firstLine(it) } }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(album, { album = it }, label = { Text("Album") }, singleLine = true, modifier = Modifier.weight(1f))
+                        SoftBtn("📋") { clipText().takeIf { it.isNotBlank() }?.let { album = firstLine(it) } }
+                    }
+
+                    Text("Tìm thông tin, album, ảnh bìa", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+                    OutlinedTextField(
+                        query, { query = it }, label = { Text("Từ khoá tìm (sửa tay nếu không ra)") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        GradBtn("🔎 Tìm trên internet") {
+                            scope.launch {
+                                status = "Đang tìm..."
+                                val q0 = query.trim()
+                                val r = withContext(Dispatchers.IO) { Net.searchLoose(q0) }
+                                results = r
+                                val exact = r.any { LibraryCheck.similar(q0, it.title) }
+                                status = when {
+                                    r.isEmpty() -> "Không tìm thấy gì. Hãy sửa từ khoá hoặc dùng nút tìm thủ công trên trình duyệt."
+                                    exact -> "Chọn một kết quả bên dưới:"
+                                    else -> "Không có kết quả khớp hoàn toàn. Đây là vài kết quả gần giống để bạn chọn:"
+                                }
+                            }
+                        }
+                        SoftBtn("🌐 Tìm thủ công") { openWeb(query.trim(), false) }
+                        SoftBtn("🌐 Tìm ảnh bìa") { openWeb(query.trim() + " album cover", true) }
+                    }
+                    results.take(12).forEach { t ->
+                        Text(
+                            "${t.title} — ${t.artist}\n${t.album}", fontSize = 13.sp,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Card2)
+                                .clickable {
+                                    title = t.title; artist = t.artist; album = t.album; artUrl = t.artUrl; picked = null
+                                    status = "Đã chọn. Bấm Lưu vào file để ghi (kèm ảnh bìa)."
+                                }.padding(12.dp)
+                        )
+                    }
+
+                    Text(
+                        "Ảnh bìa: " + if (hasCover || picked != null || artUrl != null || artLink.isNotBlank()) "có" else "chưa có",
+                        fontSize = 12.sp, color = Dim, modifier = Modifier.padding(top = 6.dp)
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            artLink, { artLink = it; picked = null }, label = { Text("Link ảnh bìa (dán từ trình duyệt)") },
+                            singleLine = true, modifier = Modifier.weight(1f)
+                        )
+                        SoftBtn("📋") { clipText().takeIf { it.isNotBlank() }?.let { artLink = firstLine(it); picked = null } }
+                    }
+                    SoftBtn("🖼 Chọn ảnh bìa từ máy") { pick.launch("image/*") }
+
+                    Text("Lời bài hát", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+                    Text(
+                        when (Lrc.kind(lyricsText)) { 2 -> "Đang có lời đồng bộ theo thời gian"; 1 -> "Đang có lời thường (chưa đồng bộ)"; else -> "Chưa có lời" },
+                        fontSize = 12.sp, color = Dim
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        GradBtn("🎤 Tải lời tự động") {
+                            scope.launch {
+                                status = "Đang tải lời..."
+                                val r = withContext(Dispatchers.IO) {
+                                    Net.lyrics(title.ifBlank { query }, artist, album, s.durationMs / 1000)
+                                }
+                                if (r == null) {
+                                    status = "Không tìm thấy lời. Dùng nút tìm lời trên web rồi dán vào ô bên dưới."
+                                } else {
+                                    lyricsText = r.text
+                                    lyricsDirty = true
+                                    status = if (r.synced) "Đã tải lời đồng bộ. Bấm Lưu vào file để ghi." else "Chỉ có lời thường (không chạy theo nhạc). Bấm Lưu để ghi."
+                                }
+                            }
+                        }
+                        SoftBtn("🌐 Tìm lời trên web") { openWeb("${title.ifBlank { query }} $artist lời bài hát", false) }
+                        SoftBtn("📋 Dán lời") {
+                            clipText().takeIf { it.isNotBlank() }?.let { lyricsText = it; lyricsDirty = true }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = lyricsText,
+                        onValueChange = { lyricsText = it; lyricsDirty = true },
+                        label = { Text("Nội dung lời (sửa tay; lời đồng bộ có dạng [mm:ss.xx] dòng lời)") },
+                        minLines = 14,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 360.dp)
+                    )
+                    Spacer(Modifier.height(40.dp))
+                }
+            }
+        }
+    }
+}
 
 // ------------------------------------------------------------------ Thành phần bổ sung
 
@@ -800,7 +920,7 @@ fun DeleteConfirm(s: Song) {
 
 /** Lời bài hát toàn màn hình, dùng trong LyricsActivity (hiện được trên màn hình khoá). */
 @Composable
-fun LockLyricsScreen(onClose: () -> Unit) {
+fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
     LaunchedEffect(Unit) {
         while (true) {
             Engine.tick()
@@ -827,7 +947,10 @@ fun LockLyricsScreen(onClose: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            SoftBtn("Đóng") { onClose() }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SoftBtn("Mở ứng dụng") { onOpenApp() }
+                SoftBtn("Đóng") { onClose() }
+            }
         }
     }
 }

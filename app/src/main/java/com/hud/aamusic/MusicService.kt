@@ -35,6 +35,9 @@ class MusicService : MediaBrowserServiceCompat() {
         const val ACTION_TOGGLE = "com.hud.aamusic.TOGGLE"
         const val ACTION_NEXT = "com.hud.aamusic.NEXT"
         const val ACTION_QUIT = "com.hud.aamusic.QUIT"
+        const val ACTION_FAV = "com.hud.aamusic.FAV"
+        const val ACTION_SHUFFLE = "com.hud.aamusic.SHUFFLE"
+        const val ACTION_REPEAT = "com.hud.aamusic.REPEAT"
     }
 
     private lateinit var session: MediaSessionCompat
@@ -83,6 +86,7 @@ class MusicService : MediaBrowserServiceCompat() {
             "loc_mode" -> updateLocation()
             "cap_enabled", "cap_pkg" -> updateCapture()
             "lock_lyrics" -> { lyricLine = ""; scheduleLyric(); pushMeta(true) }
+            "notif_extra" -> updateState()
         }
     }
 
@@ -96,6 +100,7 @@ class MusicService : MediaBrowserServiceCompat() {
                 override fun onSkipToNext() { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }
                 override fun onSkipToPrevious() { player.seekToPreviousMediaItem() }
                 override fun onSeekTo(pos: Long) { player.seekTo(pos) }
+                override fun onCustomAction(action: String, extras: Bundle?) { handleExtra(action) }
                 override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) { Engine.playById(mediaId) }
             })
             isActive = true
@@ -128,6 +133,7 @@ class MusicService : MediaBrowserServiceCompat() {
 
         Diag.service = "Dịch vụ: đang chạy"
         DataSync.syncAsync(false)
+        Engine.onExternalChange = { updateState() }
         ScreenCapture.onFrame = { bmp ->
             capArt = bmp
             capSeq++
@@ -142,6 +148,7 @@ class MusicService : MediaBrowserServiceCompat() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_FAV, ACTION_SHUFFLE, ACTION_REPEAT -> handleExtra(intent?.action ?: "")
             ACTION_PREV -> player.seekToPreviousMediaItem()
             ACTION_TOGGLE -> Engine.togglePlay()
             ACTION_NEXT -> if (player.hasNextMediaItem()) player.seekToNextMediaItem()
@@ -204,7 +211,7 @@ class MusicService : MediaBrowserServiceCompat() {
             main.postDelayed(lyricRunnable, 2500L)
             return
         }
-        val pos = player.currentPosition
+        val pos = player.currentPosition + Engine.lyricOffsetMs
         val idx = lines.indexOfLast { it.timeMs <= pos + 150 }
         val line = if (idx >= 0) lines[idx].text else ""
         if (line != lyricLine) {
@@ -228,14 +235,40 @@ class MusicService : MediaBrowserServiceCompat() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+    /** Nút phụ thứ 5 trên thông báo: ngẫu nhiên hoặc lặp lại (theo Cài đặt). Icon thể hiện trạng thái. */
+    private fun extraInfo(): Triple<Int, String, String> {
+        val kind = Engine.prefs.getString("notif_extra", "shuffle") ?: "shuffle"
+        return if (kind == "repeat") {
+            when (player.repeatMode) {
+                Player.REPEAT_MODE_ALL -> Triple(R.drawable.ic_n_repeat_all, ACTION_REPEAT, "Lặp: tất cả")
+                Player.REPEAT_MODE_ONE -> Triple(R.drawable.ic_n_repeat_one, ACTION_REPEAT, "Lặp: một bài")
+                else -> Triple(R.drawable.ic_n_repeat_off, ACTION_REPEAT, "Lặp: tắt")
+            }
+        } else if (player.shuffleModeEnabled) {
+            Triple(R.drawable.ic_n_shuffle_on, ACTION_SHUFFLE, "Ngẫu nhiên: bật")
+        } else {
+            Triple(R.drawable.ic_n_shuffle_off, ACTION_SHUFFLE, "Ngẫu nhiên: tắt")
+        }
+    }
+
+    private fun handleExtra(action: String) {
+        when (action) {
+            ACTION_FAV -> Engine.current?.let { Lists.toggleFav(it) }
+            ACTION_SHUFFLE -> Engine.toggleShuffle()
+            ACTION_REPEAT -> Engine.cycleRepeat()
+        }
+    }
+
     private fun buildNotification(): Notification {
         val s = Engine.current
         val playing = player.isPlaying
         val open = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(this, LyricsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val extra = extraInfo()
+        val fav = Engine.current?.let { Lists.isFav(it) } == true
         val b = NotificationCompat.Builder(this, "aa")
             .setSmallIcon(R.drawable.ic_stat_music)
             .setContentTitle(s?.let { Engine.title(it) } ?: "AA Music")
@@ -245,25 +278,21 @@ class MusicService : MediaBrowserServiceCompat() {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setOngoing(playing)
+            .addAction(
+                if (fav) R.drawable.ic_n_heart_on else R.drawable.ic_n_heart_off,
+                if (fav) "Bỏ yêu thích" else "Yêu thích", actionIntent(ACTION_FAV, 6)
+            )
             .addAction(android.R.drawable.ic_media_previous, "Trước", actionIntent(ACTION_PREV, 1))
             .addAction(
                 if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
                 if (playing) "Tạm dừng" else "Phát", actionIntent(ACTION_TOGGLE, 2)
             )
             .addAction(android.R.drawable.ic_media_next, "Tiếp", actionIntent(ACTION_NEXT, 3))
-            .addAction(
-                android.R.drawable.ic_menu_agenda, "Lời",
-                PendingIntent.getActivity(
-                    this, 5,
-                    Intent(this, LyricsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
-            )
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Đóng", actionIntent(ACTION_QUIT, 4))
+            .addAction(extra.first, extra.third, actionIntent(extra.second, 7))
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(session.sessionToken)
-                    .setShowActionsInCompactView(0, 1, 2)
+                    .setShowActionsInCompactView(1, 2, 3)
             )
         lastArt?.let { b.setLargeIcon(it) }
         return b.build()
@@ -361,6 +390,13 @@ class MusicService : MediaBrowserServiceCompat() {
                         PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                         PlaybackStateCompat.ACTION_SEEK_TO or PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
                 )
+                .addCustomAction(
+                    PlaybackStateCompat.CustomAction.Builder(
+                        ACTION_FAV, "Yêu thích",
+                        if (Engine.current?.let { Lists.isFav(it) } == true) R.drawable.ic_n_heart_on else R.drawable.ic_n_heart_off
+                    ).build()
+                )
+                .addCustomAction(extraInfo().let { PlaybackStateCompat.CustomAction.Builder(it.second, it.third, it.first).build() })
                 .setState(st, player.currentPosition, 1f, SystemClock.elapsedRealtime())
                 .build()
         )
@@ -411,6 +447,7 @@ class MusicService : MediaBrowserServiceCompat() {
         Diag.service = "Dịch vụ: đã dừng"
         main.removeCallbacks(lyricRunnable)
         ScreenCapture.onFrame = null
+        Engine.onExternalChange = null
         if (!ScreenCapture.manual) ScreenCapture.stop()
         Engine.prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         try { conn?.type?.removeObserver(connObserver) } catch (e: Throwable) { }
