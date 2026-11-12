@@ -28,6 +28,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
 import org.json.JSONObject
 import java.io.File
@@ -92,6 +93,7 @@ object Engine {
 
     /** Service đăng ký để cập nhật thông báo khi yêu thích / ngẫu nhiên / lặp thay đổi. */
     var onExternalChange: (() -> Unit)? = null
+    var queueVersion by mutableIntStateOf(0)
 
     // ---- Lời: chỉnh lệch thời gian theo từng bài (dương = lời hiện sớm hơn) ----
     var lyricOffsetMs by mutableIntStateOf(0)
@@ -100,6 +102,7 @@ object Engine {
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) { Engine.isPlaying = isPlaying }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { refreshCurrent() }
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) { queueVersion++ }
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (player.duration > 0) durationMs = player.duration
             if (playbackState == Player.STATE_READY) {
@@ -252,6 +255,20 @@ object Engine {
                 if (sep > 0) playIn(Lists.songsOf(rest.substring(0, sep)), rest.substring(sep + 1))
             }
             id.startsWith("FAV|") -> playIn(Lists.favSongs(), id.removePrefix("FAV|"))
+            id.startsWith("AL:") || id.startsWith("AR:") -> {
+                val byAlbum = id.startsWith("AL:")
+                val rest = id.substring(3)
+                val sep = rest.lastIndexOf('|')
+                if (sep > 0) {
+                    val name = rest.substring(0, sep)
+                    val list = ensureLoaded().filter { if (byAlbum) album(it) == name else artist(it) == name }
+                    playIn(list, rest.substring(sep + 1))
+                }
+            }
+            id.startsWith("Q:") -> {
+                val i = id.removePrefix("Q:").toIntOrNull()
+                if (i != null && i in 0 until player.mediaItemCount) jumpTo(i)
+            }
             id.startsWith("L:") -> playIn(ensureLoaded(), id)
             else -> {
                 val list = streams()
@@ -259,6 +276,79 @@ object Engine {
                 if (i >= 0) play(listOf(list[i]), 0)
             }
         }
+    }
+
+    // ---------------- Hàng đợi ----------------
+
+    fun queue(): List<Song> {
+        val out = ArrayList<Song>()
+        for (i in 0 until player.mediaItemCount) {
+            val mi = player.getMediaItemAt(i)
+            val s = index[mi.mediaId] ?: streamIndex[mi.mediaId] ?: Song(
+                mi.mediaId, mi.mediaMetadata.title?.toString() ?: "?", mi.mediaMetadata.artist?.toString() ?: "", "",
+                mi.localConfiguration?.uri ?: Uri.EMPTY, 0L
+            )
+            out += s
+        }
+        return out
+    }
+
+    fun playNext(s: Song) {
+        if (player.mediaItemCount == 0) {
+            play(listOf(s), 0)
+        } else {
+            player.addMediaItem(player.currentMediaItemIndex + 1, item(s))
+        }
+    }
+
+    fun addToQueue(s: Song) {
+        if (player.mediaItemCount == 0) {
+            play(listOf(s), 0)
+        } else {
+            player.addMediaItem(item(s))
+        }
+    }
+
+    fun removeFromQueue(i: Int) { if (i in 0 until player.mediaItemCount) player.removeMediaItem(i) }
+
+    fun moveInQueue(from: Int, to: Int) {
+        if (from in 0 until player.mediaItemCount && to in 0 until player.mediaItemCount && from != to) player.moveMediaItem(from, to)
+    }
+
+    fun jumpTo(i: Int) {
+        if (i in 0 until player.mediaItemCount) {
+            player.seekTo(i, 0L)
+            player.play()
+        }
+    }
+
+    fun clearQueue() {
+        val cur = player.currentMediaItemIndex
+        for (i in player.mediaItemCount - 1 downTo 0) if (i != cur) player.removeMediaItem(i)
+    }
+
+    // ---------------- Tìm kiếm (dùng cho giọng nói trên Android Auto) ----------------
+
+    private fun foldKey(x: String): String =
+        java.text.Normalizer.normalize(x.lowercase(), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "").replace('đ', 'd')
+            .replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+
+    fun search(q: String): List<Song> {
+        val tokens = foldKey(q).split(' ').filter { it.length >= 2 }
+        if (tokens.isEmpty()) return emptyList()
+        return ensureLoaded().filter {
+            val hay = foldKey("${title(it)} ${artist(it)} ${album(it)}")
+            tokens.all { t -> t in hay }
+        }
+    }
+
+    fun playFromSearch(q: String?) {
+        val text = q?.trim().orEmpty()
+        val all = ensureLoaded()
+        if (text.isEmpty()) { playShuffled(all); return }
+        val m = search(text)
+        if (m.isNotEmpty()) play(m, 0)
     }
 
     fun togglePlay() { if (player.isPlaying) player.pause() else player.play() }

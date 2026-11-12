@@ -1,7 +1,11 @@
 package com.hud.aamusic
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -326,22 +330,59 @@ fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
+/** Mục có thể thu gọn / mở ra (dùng trong Cài đặt cho gọn). */
+@Composable
+fun CSection(title: String, startOpen: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+    var open by remember { mutableStateOf(startOpen) }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardC)) {
+        Row(
+            Modifier.fillMaxWidth().clickable { open = !open }.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(if (open) "▾" else "▸", color = Dim, fontSize = 18.sp)
+        }
+        if (open) {
+            Column(
+                Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) { content() }
+        }
+    }
+}
+
+/** Thanh tiêu đề có nút quay lại về màn hình nghe nhạc. */
+@Composable
+fun ScreenHeader(title: String, onBack: () -> Unit, trailing: @Composable RowScope.() -> Unit = {}) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        NeonButton(44.dp, false, { onBack() }) { Text("←", fontSize = 18.sp) }
+        Spacer(Modifier.width(12.dp))
+        Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        trailing()
+    }
+}
+
 // ------------------------------------------------------------------ Gốc ứng dụng
 
 @Composable
 fun Root() {
-    var tab by remember { mutableIntStateOf(0) }
+    // 0 = Đang phát (mặc định), 1 = Thư viện, 2 = Âm thanh, 3 = Cài đặt, 4 = Hàng đợi
+    var screen by remember { mutableIntStateOf(0) }
+    BackHandler(enabled = screen != 0) { screen = 0 }
     Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
         Box(Modifier.fillMaxSize()) {
-            when (tab) {
-                0 -> LibraryScreen()
-                1 -> NowPlayingScreen()
-                2 -> EqScreen()
-                else -> SettingsScreen()
+            when (screen) {
+                0 -> NowPlayingScreen({ screen = 1 }, { screen = 2 }, { screen = 3 }, { screen = 4 })
+                1 -> LibraryScreen { screen = 0 }
+                2 -> EqScreen { screen = 0 }
+                3 -> SettingsScreen { screen = 0 }
+                else -> QueueScreen { screen = 0 }
             }
-            Column(Modifier.align(Alignment.BottomCenter)) {
-                if (tab != 1) MiniPlayer { tab = 1 }
-                FloatingNav(tab) { tab = it }
+            if (screen == 1) {
+                Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)) { MiniPlayer { screen = 0 } }
             }
             if (LibraryCheck.visible) ScanScreen()
         }
@@ -350,33 +391,6 @@ fun Root() {
     Lists.pickFor?.let { PlaylistPicker(it) }
     Lists.confirmDelete?.let { DeleteConfirm(it) }
     if (Lists.creatingPlaylist) NewPlaylistDialog()
-}
-
-@Composable
-fun FloatingNav(tab: Int, onTab: (Int) -> Unit) {
-    val items = listOf("🎵" to "Thư viện", "▶" to "Đang phát", "🎚" to "EQ", "⚙" to "Cài đặt")
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)
-            .clip(RoundedCornerShape(30.dp)).background(Color(0xF2151922)).padding(6.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        items.forEachIndexed { i, item ->
-            val sel = tab == i
-            Row(
-                Modifier.pressable { onTab(i) }.clip(RoundedCornerShape(24.dp))
-                    .then(if (sel) Modifier.background(AccentBrush) else Modifier)
-                    .padding(horizontal = if (sel) 16.dp else 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(item.first, fontSize = 18.sp)
-                if (sel) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(item.second, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                }
-            }
-        }
-    }
 }
 
 // ------------------------------------------------------------------ Ảnh bìa
@@ -439,7 +453,7 @@ fun MiniPlayer(onOpen: () -> Unit) {
 // ------------------------------------------------------------------ Thư viện
 
 @Composable
-fun LibraryScreen() {
+fun LibraryScreen(onBack: () -> Unit) {
     var sub by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -447,12 +461,13 @@ fun LibraryScreen() {
     val q = query.trim().lowercase()
     fun match(s: Song) = q.isEmpty() || Engine.title(s).lowercase().contains(q) ||
         Engine.artist(s).lowercase().contains(q) || Engine.album(s).lowercase().contains(q)
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) treeToPath(uri)?.let { Lists.addFolder(it) }
+    }
+    BackHandler(enabled = filter != null) { filter = null }
 
-    Column(Modifier.fillMaxSize().padding(top = 16.dp)) {
-        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Thư viện", fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            SoftBtn("🩺 Kiểm tra tag") { LibraryCheck.visible = true }
-        }
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader("Thư viện", onBack) { SoftBtn("🩺 Tag") { LibraryCheck.visible = true } }
         OutlinedTextField(
             value = query, onValueChange = { query = it }, singleLine = true,
             placeholder = { Text("Tìm bài hát, nghệ sĩ, album...", color = Dim) },
@@ -461,13 +476,13 @@ fun LibraryScreen() {
                 focusedBorderColor = AccentA, unfocusedBorderColor = Card2,
                 focusedContainerColor = CardC, unfocusedContainerColor = CardC
             ),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         )
         Row(
             Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Bài hát", "Yêu thích", "Playlist", "Album", "Nghệ sĩ", "Radio").forEachIndexed { i, t ->
+            listOf("Bài hát", "Thư mục", "Yêu thích", "Playlist", "Album", "Nghệ sĩ", "Radio").forEachIndexed { i, t ->
                 Pill(t, sub == i && filter == null) { sub = i; filter = null }
             }
         }
@@ -483,23 +498,84 @@ fun LibraryScreen() {
                 SongList(Lists.songsOf(f.second), true, f.second)
             }
             f != null -> {
-                Text("← ${f.second}", color = AccentA, fontWeight = FontWeight.SemiBold,
+                val label = if (f.first == "folder") java.io.File(f.second).name else f.second
+                Text("← $label", color = AccentA, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clickable { filter = null }.padding(16.dp))
-                SongList(all.filter { if (f.first == "album") Engine.album(it) == f.second else Engine.artist(it) == f.second }, true)
+                SongList(
+                    all.filter {
+                        when (f.first) {
+                            "album" -> Engine.album(it) == f.second
+                            "artist" -> Engine.artist(it) == f.second
+                            else -> java.io.File(it.path).parent == f.second
+                        }
+                    },
+                    true
+                )
             }
             sub == 0 -> SongList(all.filter { match(it) }, true)
-            sub == 1 -> {
+            sub == 1 -> FolderTab(all, { filter = "folder" to it }) { pickFolder.launch(null) }
+            sub == 2 -> {
                 val fav = Lists.favSongs().filter { match(it) }
                 if (fav.isEmpty()) EmptyHint("Chưa có bài yêu thích. Chạm ♡ ở màn hình Đang phát hoặc dùng menu ⋮ của bài.")
                 else SongList(fav, true)
             }
-            sub == 2 -> PlaylistList { filter = "playlist" to it }
-            sub == 3 -> GroupList(all.filter { match(it) }.groupBy { Engine.album(it) }) { filter = "album" to it }
-            sub == 4 -> GroupList(all.filter { match(it) }.groupBy { Engine.artist(it) }) { filter = "artist" to it }
+            sub == 3 -> PlaylistList { filter = "playlist" to it }
+            sub == 4 -> GroupList(all.filter { match(it) }.groupBy { Engine.album(it) }) { filter = "album" to it }
+            sub == 5 -> GroupList(all.filter { match(it) }.groupBy { Engine.artist(it) }) { filter = "artist" to it }
             else -> {
                 val radio = Engine.streams()
                 if (radio.isEmpty()) EmptyHint("Chưa có radio. Thêm ở Cài đặt (mỗi dòng: Tên|URL).")
                 else SongList(radio, false)
+            }
+        }
+    }
+}
+
+/** Duyệt theo thư mục và chọn thư mục nguồn của thư viện. */
+@Composable
+fun FolderTab(all: List<Song>, onOpen: (String) -> Unit, pick: () -> Unit) {
+    val groups = remember(all) { all.filter { it.path.isNotEmpty() }.groupBy { java.io.File(it.path).parent ?: "" } }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
+        item {
+            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GradBtn("＋ Chọn thư mục nguồn") { pick() }
+                if (Lists.hidden.isNotEmpty()) SoftBtn("Hiện lại ${Lists.hidden.size} bài ẩn") { Lists.unhideAll() }
+            }
+        }
+        if (Lists.folders.isNotEmpty()) {
+            item {
+                Text("Chỉ hiện nhạc trong các thư mục đã chọn:", color = Dim, fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp))
+            }
+            items(Lists.folders) { fd ->
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(fd, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text("✕", color = AccentB, modifier = Modifier.pressable { Lists.removeFolder(fd) }.padding(10.dp))
+                }
+            }
+        } else {
+            item {
+                Text("Đang hiện nhạc từ toàn bộ máy. Chọn thư mục để chỉ hiện nhạc trong đó.", color = Dim,
+                    fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp))
+            }
+        }
+        item {
+            Text("Thư mục trong thư viện", fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 4.dp))
+        }
+        items(groups.keys.sorted()) { dir ->
+            Row(
+                Modifier.fillMaxWidth().clickable { onOpen(dir) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Card2), Alignment.Center) {
+                    Text("📁", fontSize = 22.sp)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text(java.io.File(dir).name.ifEmpty { dir }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text("${groups[dir]?.size ?: 0} bài • $dir", color = Dim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }
@@ -606,6 +682,8 @@ fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
                     text = { Text(if (Lists.isFav(s)) "♥ Bỏ yêu thích" else "♡ Thêm vào yêu thích") },
                     onClick = { menu = false; Lists.toggleFav(s) }
                 )
+                DropdownMenuItem(text = { Text("▶ Phát tiếp theo") }, onClick = { menu = false; Engine.playNext(s) })
+                DropdownMenuItem(text = { Text("☰ Thêm vào hàng đợi") }, onClick = { menu = false; Engine.addToQueue(s) })
                 if (!s.streaming) {
                     DropdownMenuItem(text = { Text("＋ Thêm vào playlist") }, onClick = { menu = false; Lists.pickFor = s })
                 }
@@ -625,12 +703,8 @@ fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
 // ------------------------------------------------------------------ Đang phát
 
 @Composable
-fun NowPlayingScreen() {
+fun NowPlayingScreen(onLibrary: () -> Unit, onEq: () -> Unit, onSettings: () -> Unit, onQueue: () -> Unit) {
     val s = Engine.current
-    if (s == null) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Chưa phát bài nào", color = Dim) }
-        return
-    }
     var showLyrics by remember { mutableStateOf(false) }
     val hasLyrics = Engine.lyricLines.isNotEmpty() || Engine.plainLyrics.isNotEmpty()
     LaunchedEffect(Unit) {
@@ -640,8 +714,8 @@ fun NowPlayingScreen() {
         }
     }
     val ver = Engine.artVersion
-    val tint by produceState(Card2, s.id, ver) {
-        value = withContext(Dispatchers.IO) {
+    val tint by produceState(Card2, s?.id, ver) {
+        value = if (s == null) Card2 else withContext(Dispatchers.IO) {
             val b = Engine.loadArt(s, 96)
             if (b == null) Card2 else {
                 val dom = Palette.from(b).generate().getDominantColor(0xFF2A3140.toInt())
@@ -651,85 +725,109 @@ fun NowPlayingScreen() {
     }
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(tint, Bg)))) {
         Column(
-            Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 100.dp),
+            Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, top = 12.dp, bottom = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
-                if (showLyrics) {
-                    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)).background(Color(0x66000000)).padding(12.dp)) {
-                        LyricsView()
-                        Text(
-                            "✕", fontSize = 18.sp,
-                            modifier = Modifier.align(Alignment.TopEnd).clickable { showLyrics = false }.padding(8.dp)
-                        )
+            // Thanh trên: thư viện, tên màn hình, equalizer, cài đặt
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                NeonButton(44.dp, false, { onLibrary() }) { Text("☰", fontSize = 18.sp) }
+                Text("Đang phát", color = Dim, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                NeonButton(44.dp, false, { onEq() }) { Text("🎚", fontSize = 18.sp) }
+                Spacer(Modifier.width(10.dp))
+                NeonButton(44.dp, false, { onSettings() }) { Text("⚙", fontSize = 18.sp) }
+            }
+            if (s == null) {
+                Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Chưa phát bài nào", color = Dim)
+                        Spacer(Modifier.height(14.dp))
+                        GradBtn("Mở thư viện") { onLibrary() }
                     }
-                } else {
-                    Box(
-                        Modifier.fillMaxWidth().aspectRatio(1f)
-                            .shadow(24.dp, RoundedCornerShape(28.dp))
-                            .clickable(enabled = hasLyrics) { showLyrics = true }
-                    ) {
-                        Art(s, Modifier.fillMaxSize(), 720, 28.dp)
-                        if (hasLyrics) {
-                            Box(
-                                Modifier.align(Alignment.BottomCenter).padding(12.dp)
-                                    .clip(RoundedCornerShape(16.dp)).background(Color(0x99000000))
-                                    .padding(horizontal = 12.dp, vertical = 5.dp)
-                            ) { Text("Nhấn để xem lời bài hát", fontSize = 11.sp, color = Color.White) }
+                }
+            } else {
+                Spacer(Modifier.height(12.dp))
+                Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
+                    if (showLyrics) {
+                        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)).background(Color(0x66000000)).padding(12.dp)) {
+                            LyricsView()
+                            Text(
+                                "✕", fontSize = 18.sp,
+                                modifier = Modifier.align(Alignment.TopEnd).clickable { showLyrics = false }.padding(8.dp)
+                            )
+                        }
+                    } else {
+                        Box(
+                            Modifier.fillMaxWidth().aspectRatio(1f)
+                                .shadow(24.dp, RoundedCornerShape(28.dp))
+                                .clickable(enabled = hasLyrics) { showLyrics = true }
+                        ) {
+                            Art(s, Modifier.fillMaxSize(), 720, 28.dp)
+                            if (hasLyrics) {
+                                Box(
+                                    Modifier.align(Alignment.BottomCenter).padding(12.dp)
+                                        .clip(RoundedCornerShape(16.dp)).background(Color(0x99000000))
+                                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                                ) { Text("Nhấn để xem lời bài hát", fontSize = 11.sp, color = Color.White) }
+                            }
                         }
                     }
                 }
-            }
-            Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    Engine.title(s), fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)
-                )
-                val fav = Lists.isFav(s)
-                Box(Modifier.pressable { Lists.toggleFav(s) }.padding(8.dp)) {
-                    Text(if (fav) "♥" else "♡", fontSize = 28.sp, color = if (fav) AccentB else Dim)
-                }
-            }
-            Text(
-                "${Engine.artist(s)} • ${Engine.album(s)}", color = Color(0xFFCFD3D8), maxLines = 1,
-                overflow = TextOverflow.Ellipsis, fontSize = 14.sp
-            )
-            val dur = max(Engine.durationMs, 1L)
-            Slider(
-                value = Engine.positionMs.toFloat().coerceIn(0f, dur.toFloat()),
-                onValueChange = { Engine.seeking = true; Engine.positionMs = it.toLong() },
-                onValueChangeFinished = { Engine.player.seekTo(Engine.positionMs); Engine.seeking = false },
-                valueRange = 0f..dur.toFloat(),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White, activeTrackColor = AccentA, inactiveTrackColor = Color(0x44FFFFFF)
-                )
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(fmt(Engine.positionMs), color = Dim, fontSize = 12.sp)
-                Text(fmt(Engine.durationMs), color = Dim, fontSize = 12.sp)
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(
-                Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                NeonButton(48.dp, Engine.shuffle, { Engine.toggleShuffle() }) {
-                    IconShuffle(if (Engine.shuffle) AccentA else Dim, 24.dp)
-                }
-                NeonButton(56.dp, false, { Engine.player.seekToPreviousMediaItem() }) {
-                    IconSkip(false, Color.White, 26.dp)
-                }
-                PlayOrb(Engine.isPlaying) { Engine.togglePlay() }
-                NeonButton(56.dp, false, { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }) {
-                    IconSkip(true, Color.White, 26.dp)
-                }
-                val rep = Engine.repeatMode != Player.REPEAT_MODE_OFF
-                NeonButton(48.dp, rep, { Engine.cycleRepeat() }) {
-                    IconRepeat(if (rep) AccentA else Dim, 24.dp)
-                    if (Engine.repeatMode == Player.REPEAT_MODE_ONE) {
-                        Text("1", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        Engine.title(s), fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f)
+                    )
+                    val fav = Lists.isFav(s)
+                    Box(Modifier.pressable { Lists.toggleFav(s) }.padding(8.dp)) {
+                        Text(if (fav) "♥" else "♡", fontSize = 28.sp, color = if (fav) AccentB else Dim)
                     }
+                }
+                Text(
+                    "${Engine.artist(s)} • ${Engine.album(s)}", color = Color(0xFFCFD3D8), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, fontSize = 14.sp
+                )
+                val dur = max(Engine.durationMs, 1L)
+                Slider(
+                    value = Engine.positionMs.toFloat().coerceIn(0f, dur.toFloat()),
+                    onValueChange = { Engine.seeking = true; Engine.positionMs = it.toLong() },
+                    onValueChangeFinished = { Engine.player.seekTo(Engine.positionMs); Engine.seeking = false },
+                    valueRange = 0f..dur.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White, activeTrackColor = AccentA, inactiveTrackColor = Color(0x44FFFFFF)
+                    )
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(fmt(Engine.positionMs), color = Dim, fontSize = 12.sp)
+                    Text(fmt(Engine.durationMs), color = Dim, fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    NeonButton(48.dp, Engine.shuffle, { Engine.toggleShuffle() }) {
+                        IconShuffle(if (Engine.shuffle) AccentA else Dim, 24.dp)
+                    }
+                    NeonButton(56.dp, false, { Engine.player.seekToPreviousMediaItem() }) {
+                        IconSkip(false, Color.White, 26.dp)
+                    }
+                    PlayOrb(Engine.isPlaying) { Engine.togglePlay() }
+                    NeonButton(56.dp, false, { if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem() }) {
+                        IconSkip(true, Color.White, 26.dp)
+                    }
+                    val rep = Engine.repeatMode != Player.REPEAT_MODE_OFF
+                    NeonButton(48.dp, rep, { Engine.cycleRepeat() }) {
+                        IconRepeat(if (rep) AccentA else Dim, 24.dp)
+                        if (Engine.repeatMode == Player.REPEAT_MODE_ONE) {
+                            Text("1", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SoftBtn("📚 Thư viện") { onLibrary() }
+                    SoftBtn("📃 Hàng đợi") { onQueue() }
                 }
             }
         }
