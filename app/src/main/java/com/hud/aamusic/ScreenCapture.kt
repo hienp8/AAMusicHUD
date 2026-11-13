@@ -2,7 +2,6 @@ package com.hud.aamusic
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -116,19 +115,8 @@ object ScreenCapture {
             val y0 = (h * yp / 100f).toInt().coerceIn(0, (h - cw).coerceAtLeast(0))
             val ch = cw.coerceAtMost(h - y0)
             val crop = Bitmap.createBitmap(full, x0, y0, cw, ch)
-            var art = Bitmap.createScaledBitmap(crop, 512, 512, true)
-            // Khi Android Auto thu nhỏ ảnh bìa còn một nửa (thường cắt phần giữa), dải ngang 2:1 này nằm ở giữa ảnh
-            if (prefs.getBoolean("cap_band", true)) {
-                val rw = (w * prefs.getInt("cap_rw", 92) / 100f).toInt().coerceIn(32, w)
-                val rh = (rw / 2).coerceIn(16, h)
-                val rx = (w * prefs.getInt("cap_rx", 4) / 100f).toInt().coerceIn(0, w - rw)
-                val ry = (h * prefs.getInt("cap_ry", 14) / 100f).toInt().coerceIn(0, (h - rh).coerceAtLeast(0))
-                val band = Bitmap.createScaledBitmap(Bitmap.createBitmap(full, rx, ry, rw, rh), 512, 256, true)
-                val out = art.copy(Bitmap.Config.ARGB_8888, true)
-                val top = (512 * prefs.getInt("cap_bc", 50) / 100f - 128f).coerceIn(0f, 256f)
-                Canvas(out).drawBitmap(band, 0f, top, null)
-                art = out
-            }
+            // Ảnh vuông full gửi lên xe (không ghép dải ngang để tránh bị "chia đôi" khi hiển thị full)
+            val art = Bitmap.createScaledBitmap(crop, 512, 512, true)
             val finalArt = art
             val small = Bitmap.createScaledBitmap(full, w / 2, h / 2, true)
             main.post {
