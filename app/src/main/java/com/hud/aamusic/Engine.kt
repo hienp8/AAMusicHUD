@@ -807,7 +807,7 @@ object Engine {
         saveEq()
     }
 
-    fun setPreamp(v: Int) {
+    fun changePreamp(v: Int) {
         preamp = v.coerceIn(-1200, 1200)
         prefs.edit().putInt("preamp", preamp).apply()
         applyDp()
