@@ -182,7 +182,7 @@ fun EqScreen(onBack: () -> Unit) {
             }
             Section("Nâng cao") {
                 LabeledSlider("Tiền khuếch đại (preamp)", "%+.1f dB".format(Engine.preamp / 100f), Engine.preamp.toFloat(), -1200f, 1200f) {
-                    Engine.setPreamp(it.toInt())
+                    Engine.changePreamp(it.toInt())
                 }
                 CheckRow("Chống vỡ tiếng (limiter)", Engine.limiterOn) { Engine.setLimiter(it) }
                 LabeledSlider("Âm trường (mở rộng stereo)", "${Engine.virtStrength / 10}%", Engine.virtStrength.toFloat(), 0f, 1000f) {
