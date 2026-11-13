@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
     }
 
     fun requestPerms() {
-        val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        val perms = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= 33) {
             perms += Manifest.permission.READ_MEDIA_AUDIO
             perms += Manifest.permission.POST_NOTIFICATIONS

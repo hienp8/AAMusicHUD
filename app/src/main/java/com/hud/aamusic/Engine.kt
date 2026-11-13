@@ -3,6 +3,7 @@ package com.hud.aamusic
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
@@ -10,6 +11,8 @@ import android.media.MediaScannerConnection
 import android.media.audiofx.BassBoost
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
+import android.media.audiofx.Virtualizer
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -30,6 +33,8 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.core.content.ContextCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import kotlin.concurrent.thread
@@ -78,9 +83,15 @@ object Engine {
     var eqEnabled by mutableStateOf(false)
     val bandLevels = mutableStateListOf<Int>()     // đơn vị 1/100 dB
     var bassStrength by mutableIntStateOf(0)
+    var preamp by mutableIntStateOf(0)          // 1/100 dB, -1200..1200
+    var virtStrength by mutableIntStateOf(0)    // âm trường, 0..1000
+    var loudGain by mutableIntStateOf(0)        // tăng âm lượng, mB 0..1200
+    var limiterOn by mutableStateOf(true)       // chống vỡ tiếng
     private var dp: DynamicsProcessing? = null
     private var eq: Equalizer? = null
     private var bass: BassBoost? = null
+    private var virt: Virtualizer? = null
+    private var loud: LoudnessEnhancer? = null
     private var attachedSession = -1
 
     private var index: Map<String, Song> = emptyMap()
@@ -100,9 +111,13 @@ object Engine {
     private val offsets = HashMap<String, Int>()
 
     private val listener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) { Engine.isPlaying = isPlaying }
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { refreshCurrent() }
-        override fun onTimelineChanged(timeline: Timeline, reason: Int) { queueVersion++ }
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            Engine.isPlaying = isPlaying
+            savePos()
+            if (isPlaying) startPosSaver() else stopPosSaver()
+        }
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { refreshCurrent(); savePos() }
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) { queueVersion++; scheduleQueueSave() }
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (player.duration > 0) durationMs = player.duration
             if (playbackState == Player.STATE_READY) {
@@ -111,8 +126,8 @@ object Engine {
             }
         }
         override fun onAudioSessionIdChanged(audioSessionId: Int) { attachEffects(audioSessionId) }
-        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) { shuffle = shuffleModeEnabled; onExternalChange?.invoke() }
-        override fun onRepeatModeChanged(repeatMode: Int) { Engine.repeatMode = repeatMode; onExternalChange?.invoke() }
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) { shuffle = shuffleModeEnabled; onExternalChange?.invoke(); savePos() }
+        override fun onRepeatModeChanged(repeatMode: Int) { Engine.repeatMode = repeatMode; onExternalChange?.invoke(); savePos() }
     }
 
     fun init(ctx: Context) {
@@ -130,10 +145,16 @@ object Engine {
         }
         eqEnabled = prefs.getBoolean("eq_on", false)
         bassStrength = prefs.getInt("bass", 0)
+        preamp = prefs.getInt("preamp", 0)
+        virtStrength = prefs.getInt("virt", 0)
+        loudGain = prefs.getInt("loud", 0)
+        limiterOn = prefs.getBoolean("limiter", true)
         val saved = prefs.getString("eq10", "")?.split(",")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
         for (i in 0 until 10) bandLevels.add(if (saved.size == 10) saved[i].coerceIn(-1200, 1200) else 0)
         loadEdits()
         Lists.load()
+        LibraryCheck.load()
+        if (hasAudioPerm()) loadSongsAsync()
         try {
             val o = JSONObject(prefs.getString("lyric_offsets", "{}") ?: "{}")
             for (k in o.keys()) offsets[k] = o.optInt(k, 0)
@@ -160,6 +181,7 @@ object Engine {
         keyIndex = l.associateBy { Lists.key(it) }
         refilter()
         refreshCurrent()
+        restoreState()
     }
 
     /** Lọc lại thư viện theo thư mục đã chọn và danh sách bài đã ẩn. */
@@ -383,6 +405,85 @@ object Engine {
         }
     }
 
+    // ---------------- Ghi nhớ trạng thái phát ----------------
+
+    private var restored = false
+    private val posRunnable = object : Runnable {
+        override fun run() {
+            savePos()
+            main.postDelayed(this, 10000L)
+        }
+    }
+    private val queueRunnable = Runnable { saveQueueNow() }
+
+    private fun startPosSaver() { main.removeCallbacks(posRunnable); main.postDelayed(posRunnable, 10000L) }
+    private fun stopPosSaver() { main.removeCallbacks(posRunnable) }
+
+    private fun hasAudioPerm(): Boolean {
+        val p = if (Build.VERSION.SDK_INT >= 33) android.Manifest.permission.READ_MEDIA_AUDIO
+        else android.Manifest.permission.READ_EXTERNAL_STORAGE
+        return ContextCompat.checkSelfPermission(app, p) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /** Lưu bài đang phát, vị trí, ngẫu nhiên và lặp lại. */
+    fun savePos() {
+        try {
+            val id = player.currentMediaItem?.mediaId ?: return
+            val s = index[id] ?: streamIndex[id] ?: return
+            prefs.edit()
+                .putString("last_key", Lists.key(s))
+                .putLong("last_pos", player.currentPosition)
+                .putBoolean("last_shuffle", player.shuffleModeEnabled)
+                .putInt("last_repeat", player.repeatMode)
+                .apply()
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun scheduleQueueSave() {
+        main.removeCallbacks(queueRunnable)
+        main.postDelayed(queueRunnable, 1500L)
+    }
+
+    private fun saveQueueNow() {
+        if (player.mediaItemCount == 0) return   // không xoá hàng đợi đã lưu khi app vừa khởi động
+        val keys = ArrayList<String>()
+        for (i in 0 until player.mediaItemCount) {
+            val id = player.getMediaItemAt(i).mediaId
+            (index[id] ?: streamIndex[id])?.let { keys += Lists.key(it) }
+        }
+        thread {
+            try { File(app.filesDir, "queue.json").writeText(JSONObject().put("keys", JSONArray(keys)).toString()) } catch (e: Exception) { }
+        }
+    }
+
+    /** Khôi phục hàng đợi và bài đang phát lần cuối (ở trạng thái tạm dừng). */
+    private fun restoreState() {
+        if (restored) return
+        restored = true
+        if (player.mediaItemCount > 0) return
+        try {
+            val f = File(app.filesDir, "queue.json")
+            if (!f.exists()) return
+            val arr = JSONObject(f.readText()).optJSONArray("keys") ?: return
+            streams()
+            val list = ArrayList<Song>()
+            for (i in 0 until arr.length()) {
+                val k = arr.optString(i)
+                (keyIndex[k] ?: streamIndex[k])?.let { list += it }
+            }
+            if (list.isEmpty()) return
+            val lastKey = prefs.getString("last_key", "") ?: ""
+            val idx = list.indexOfFirst { Lists.key(it) == lastKey }.let { if (it >= 0) it else 0 }
+            val pos = if (lastKey.isNotEmpty()) prefs.getLong("last_pos", 0L) else 0L
+            player.shuffleModeEnabled = prefs.getBoolean("last_shuffle", false)
+            player.repeatMode = prefs.getInt("last_repeat", Player.REPEAT_MODE_OFF)
+            player.setMediaItems(list.map { item(it) }, idx, pos)
+            player.prepare()
+        } catch (e: Exception) {
+        }
+    }
+
     fun adjustLyricOffset(delta: Int) {
         val s = current ?: return
         val v = (lyricOffsetMs + delta).coerceIn(-15000, 15000)
@@ -561,11 +662,12 @@ object Engine {
         if (Build.VERSION.SDK_INT >= 28) {
             try {
                 val cfg = DynamicsProcessing.Config.Builder(
-                    DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2, true, 10, false, 0, false, 0, false
+                    DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2, true, 10, false, 0, false, 0, true
                 ).build()
                 val d = DynamicsProcessing(0, session, cfg)
                 dp = d
                 applyDp()
+                applyLimiter()
                 d.setEnabled(eqEnabled)
             } catch (t: Throwable) {
                 dp = null
@@ -590,6 +692,39 @@ object Engine {
         } catch (ex: Exception) {
             bass = null
         }
+        try {
+            val v = Virtualizer(0, session)
+            if (v.strengthSupported) v.setStrength(virtStrength.toShort())
+            v.setEnabled(virtStrength > 0)
+            virt = v
+        } catch (ex: Throwable) {
+            virt = null
+        }
+        try {
+            val l = LoudnessEnhancer(session)
+            l.setTargetGain(loudGain)
+            l.setEnabled(loudGain > 0)
+            loud = l
+        } catch (ex: Throwable) {
+            loud = null
+        }
+        applyPreampFallback()
+    }
+
+    private fun applyLimiter() {
+        val d = dp ?: return
+        try {
+            for (ch in 0 until 2) {
+                d.setLimiterByChannelIndex(ch, DynamicsProcessing.Limiter(true, limiterOn, 0, 1f, 80f, 10f, -1.5f, 0f))
+            }
+        } catch (t: Throwable) {
+        }
+    }
+
+    /** Không có DynamicsProcessing: chỉ giảm được tiền khuếch đại bằng âm lượng player. */
+    private fun applyPreampFallback() {
+        if (dp != null) return
+        player.volume = if (preamp < 0) Math.pow(10.0, preamp / 2000.0).toFloat().coerceIn(0.05f, 1f) else 1f
     }
 
     private fun applyDp() {
@@ -603,7 +738,7 @@ object Engine {
                     d.setPreEqBandByChannelIndex(ch, b, DynamicsProcessing.EqBand(true, EQ_FREQS[b].toFloat(), g))
                 }
             }
-            d.setInputGainAllChannelsTo(-maxPos * 0.5f)
+            d.setInputGainAllChannelsTo(preamp / 100f - maxPos * 0.5f)
         } catch (t: Throwable) {
         }
     }
@@ -637,6 +772,10 @@ object Engine {
         try { dp?.release() } catch (e: Throwable) { }
         try { eq?.release() } catch (e: Throwable) { }
         try { bass?.release() } catch (e: Throwable) { }
+        try { virt?.release() } catch (e: Throwable) { }
+        try { loud?.release() } catch (e: Throwable) { }
+        virt = null
+        loud = null
         dp = null
         eq = null
         bass = null
@@ -668,6 +807,41 @@ object Engine {
         saveEq()
     }
 
+    fun setPreamp(v: Int) {
+        preamp = v.coerceIn(-1200, 1200)
+        prefs.edit().putInt("preamp", preamp).apply()
+        applyDp()
+        applyPreampFallback()
+    }
+
+    fun setVirtualizer(v: Int) {
+        virtStrength = v.coerceIn(0, 1000)
+        try {
+            virt?.let {
+                it.setEnabled(virtStrength > 0)
+                if (it.strengthSupported) it.setStrength(virtStrength.toShort())
+            }
+        } catch (e: Throwable) { }
+        prefs.edit().putInt("virt", virtStrength).apply()
+    }
+
+    fun setLoudness(v: Int) {
+        loudGain = v.coerceIn(0, 1200)
+        try {
+            loud?.let {
+                it.setTargetGain(loudGain)
+                it.setEnabled(loudGain > 0)
+            }
+        } catch (e: Throwable) { }
+        prefs.edit().putInt("loud", loudGain).apply()
+    }
+
+    fun setLimiter(on: Boolean) {
+        limiterOn = on
+        applyLimiter()
+        prefs.edit().putBoolean("limiter", on).apply()
+    }
+
     fun setBass(v: Int) {
         bassStrength = v
         try {
@@ -681,6 +855,7 @@ object Engine {
 
     /** Thoát hoàn toàn: dừng nhạc, dừng dịch vụ, đóng app và kết thúc tiến trình. */
     fun quit(activity: android.app.Activity) {
+        savePos()
         try { player.stop() } catch (e: Exception) { }
         ScreenCapture.stop()
         releaseEffects()

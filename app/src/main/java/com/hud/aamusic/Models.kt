@@ -29,7 +29,8 @@ data class TagState(
     val album: String,
     val hasCover: Boolean,
     val lyricKind: Int,
-    val ok: Boolean
+    val ok: Boolean,
+    val mtime: Long = 0L
 ) {
     fun missing(): List<String> {
         val m = ArrayList<String>()
@@ -50,7 +51,8 @@ data class Proposal(
     val artist: String?,
     val album: String?,
     val artUrl: String?,
-    val lyrics: Net.Lyr?
+    val lyrics: Net.Lyr?,
+    val path: String = ""
 ) {
     fun summary(): String {
         val s = ArrayList<String>()
@@ -63,17 +65,11 @@ data class Proposal(
     }
 }
 
-/** Trạng thái chẩn đoán hiển thị trong Cài đặt. */
+/** Trạng thái hiển thị trong Cài đặt. */
 object Diag {
     var service by mutableStateOf("Dịch vụ: chưa chạy")
-    var gps by mutableStateOf("GPS: chưa có tín hiệu")
     var aa by mutableStateOf("Android Auto: chưa kiểm tra")
-    var osmCam by mutableStateOf("OSM camera: chưa tải")
-    var osmLim by mutableStateOf("OSM giới hạn đường: chưa tải")
-    var test by mutableStateOf("")
-    var sync by mutableStateOf("Dữ liệu từ URL: chưa cập nhật")
     var cap by mutableStateOf("Chụp màn hình: chưa bật")
-    var goong by mutableStateOf("Goong: chưa dùng")
 }
 
 object Lrc {

@@ -7,11 +7,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.text.Normalizer
 import kotlin.concurrent.thread
 
-/** Quét toàn bộ thư viện, tìm bài thiếu tag, đề xuất bổ sung từ internet và ghi vào file. */
+/** Quét thư viện tìm bài thiếu tag, đề xuất bổ sung từ internet. Kết quả được lưu để lần sau không phải quét lại. */
 object LibraryCheck {
     var visible by mutableStateOf(false)
     var scanning by mutableStateOf(false)
@@ -28,24 +30,114 @@ object LibraryCheck {
 
     fun stop() { cancel = true }
 
+    private fun file() = File(Engine.app.filesDir, "scan.json")
+
+    // ---------------- Lưu / nạp kết quả ----------------
+
+    fun load() {
+        thread {
+            try {
+                val f = file()
+                if (!f.exists()) return@thread
+                val o = JSONObject(f.readText())
+                val ss = ArrayList<TagState>()
+                val a = o.optJSONArray("s")
+                if (a != null) {
+                    for (i in 0 until a.length()) {
+                        val x = a.getJSONObject(i)
+                        ss += TagState(
+                            x.optString("i"), x.optString("p"), x.optString("t"), x.optString("a"), x.optString("b"),
+                            x.optBoolean("c"), x.optInt("l"), x.optBoolean("k", true), x.optLong("m")
+                        )
+                    }
+                }
+                val ps = ArrayList<Proposal>()
+                val pa = o.optJSONArray("p")
+                if (pa != null) {
+                    for (i in 0 until pa.length()) {
+                        val x = pa.getJSONObject(i)
+                        val lyr = if (x.has("lt")) Net.Lyr(x.getString("lt"), x.optBoolean("ls")) else null
+                        ps += Proposal(
+                            x.optString("s"), x.optString("lb"),
+                            if (x.has("t")) x.getString("t") else null,
+                            if (x.has("a")) x.getString("a") else null,
+                            if (x.has("b")) x.getString("b") else null,
+                            if (x.has("u")) x.getString("u") else null,
+                            lyr, x.optString("pa")
+                        )
+                    }
+                }
+                main.post {
+                    states = ss
+                    proposals.clear()
+                    proposals.addAll(ps)
+                    if (ss.isNotEmpty()) message = "Đã nạp kết quả quét lần trước (${ss.size} file)."
+                }
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    fun saveAsync() {
+        val st = states.toList()
+        val ps = proposals.toList()
+        thread {
+            try {
+                val o = JSONObject()
+                val a = JSONArray()
+                for (t in st) {
+                    a.put(
+                        JSONObject().put("i", t.id).put("p", t.path).put("t", t.title).put("a", t.artist)
+                            .put("b", t.album).put("c", t.hasCover).put("l", t.lyricKind).put("k", t.ok).put("m", t.mtime)
+                    )
+                }
+                o.put("s", a)
+                val pa = JSONArray()
+                for (p in ps) {
+                    pa.put(
+                        JSONObject().put("s", p.songId).put("lb", p.label).putOpt("t", p.title).putOpt("a", p.artist)
+                            .putOpt("b", p.album).putOpt("u", p.artUrl).putOpt("lt", p.lyrics?.text)
+                            .put("ls", p.lyrics?.synced ?: false).put("pa", p.path)
+                    )
+                }
+                o.put("p", pa)
+                file().writeText(o.toString())
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    fun dismiss(p: Proposal) {
+        proposals.remove(p)
+        saveAsync()
+    }
+
+    // ---------------- Quét ----------------
+
     fun scan() {
         if (scanning || suggesting || applying) return
         val list = Engine.songs.filter { !it.streaming && it.path.isNotEmpty() }
+        val prev = states.associateBy { it.path }
         scanning = true
         cancel = false
         progress = 0
         total = list.size
         message = if (list.isEmpty()) "Chưa có bài hát nào (hãy cấp quyền truy cập nhạc)." else ""
-        proposals.clear()
         thread {
             val out = ArrayList<TagState>()
             for ((i, s) in list.withIndex()) {
                 if (cancel) break
-                val info = Tags.read(s.path)
-                out += if (info == null) {
-                    TagState(s.id, s.path, s.title, s.artist, s.album, false, 0, false)
+                val m = try { File(s.path).lastModified() } catch (e: Exception) { 0L }
+                val old = prev[s.path]
+                if (old != null && old.ok && m != 0L && old.mtime == m) {
+                    out += old.copy(id = s.id)   // file không đổi: dùng lại kết quả cũ
                 } else {
-                    TagState(s.id, s.path, info.title, info.artist, info.album, info.hasCover, Lrc.kind(info.lyrics), true)
+                    val info = Tags.read(s.path)
+                    out += if (info == null) {
+                        TagState(s.id, s.path, s.title, s.artist, s.album, false, 0, false, m)
+                    } else {
+                        TagState(s.id, s.path, info.title, info.artist, info.album, info.hasCover, Lrc.kind(info.lyrics), true, m)
+                    }
                 }
                 if (i % 15 == 0) main.post { progress = i + 1 }
             }
@@ -55,6 +147,7 @@ object LibraryCheck {
                 scanning = false
                 val bad = out.count { it.ok && it.missing().isNotEmpty() }
                 message = "Đã quét ${out.size} file, $bad file còn thiếu thông tin."
+                saveAsync()
             }
         }
     }
@@ -81,6 +174,7 @@ object LibraryCheck {
             main.post {
                 suggesting = false
                 message = "Đã tạo ${proposals.size} đề xuất. Kiểm tra rồi bấm Áp dụng."
+                saveAsync()
             }
         }
     }
@@ -103,7 +197,7 @@ object LibraryCheck {
     }
 
     private fun suggestOne(st: TagState): Proposal? {
-        val song = Engine.songById(st.id) ?: return null
+        val song = Engine.pathMap()[st.path] ?: Engine.songById(st.id) ?: return null
         val (gArtist, gTitle) = guess(st.path)
         val baseTitle = st.title.ifBlank { gTitle }
         val baseArtist = st.artist.ifBlank { gArtist }
@@ -128,18 +222,18 @@ object LibraryCheck {
             }
         }
         if (newTitle == null && newArtist == null && newAlbum == null && art == null && lyr == null) return null
-        return Proposal(st.id, newTitle ?: Engine.title(song), newTitle, newArtist, newAlbum, art, lyr)
+        return Proposal(st.id, newTitle ?: Engine.title(song), newTitle, newArtist, newAlbum, art, lyr, st.path)
     }
 
     private fun applyOne(p: Proposal): String? {
-        val song = Engine.songById(p.songId) ?: return "Không tìm thấy bài hát"
+        val song = Engine.pathMap()[p.path] ?: Engine.songById(p.songId) ?: return "Không tìm thấy bài hát"
         val cover = p.artUrl?.let { Net.bytes(it) }
         val err = Engine.applyTags(song, p.title, p.artist, p.album, p.lyrics?.text, cover)
         if (err == null) {
             main.post {
                 proposals.remove(p)
                 states = states.map {
-                    if (it.id != p.songId) it else it.copy(
+                    if (it.path != p.path && it.id != p.songId) it else it.copy(
                         title = p.title ?: it.title,
                         artist = p.artist ?: it.artist,
                         album = p.album ?: it.album,
@@ -147,6 +241,7 @@ object LibraryCheck {
                         lyricKind = p.lyrics?.let { l -> if (l.synced) 2 else 1 } ?: it.lyricKind
                     )
                 }
+                saveAsync()
             }
         }
         return err

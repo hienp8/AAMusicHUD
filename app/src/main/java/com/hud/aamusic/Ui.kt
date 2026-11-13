@@ -730,10 +730,13 @@ fun NowPlayingScreen(onLibrary: () -> Unit, onEq: () -> Unit, onSettings: () -> 
         ) {
             // Thanh trên: thư viện, tên màn hình, equalizer, cài đặt
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                NeonButton(44.dp, false, { onLibrary() }) { Text("☰", fontSize = 18.sp) }
-                Text("Đang phát", color = Dim, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                Text("Đang phát", color = Dim, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                NeonButton(44.dp, false, { onLibrary() }) { Text("📚", fontSize = 18.sp) }
+                Spacer(Modifier.width(8.dp))
+                NeonButton(44.dp, false, { onQueue() }) { Text("📃", fontSize = 18.sp) }
+                Spacer(Modifier.width(8.dp))
                 NeonButton(44.dp, false, { onEq() }) { Text("🎚", fontSize = 18.sp) }
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(8.dp))
                 NeonButton(44.dp, false, { onSettings() }) { Text("⚙", fontSize = 18.sp) }
             }
             if (s == null) {
@@ -823,11 +826,6 @@ fun NowPlayingScreen(onLibrary: () -> Unit, onEq: () -> Unit, onSettings: () -> 
                             Text("1", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
                     }
-                }
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SoftBtn("📚 Thư viện") { onLibrary() }
-                    SoftBtn("📃 Hàng đợi") { onQueue() }
                 }
             }
         }

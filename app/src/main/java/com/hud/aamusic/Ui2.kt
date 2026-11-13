@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.heightIn
@@ -36,7 +38,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -124,6 +125,20 @@ fun VSlider(value: Float, min: Float, max: Float, onChange: (Float) -> Unit, mod
 // ------------------------------------------------------------------ Equalizer + Bass
 
 @Composable
+fun LabeledSlider(label: String, value: String, v: Float, min: Float, max: Float, onChange: (Float) -> Unit) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text(value, color = AccentA, fontSize = 13.sp)
+        }
+        Slider(
+            value = v.coerceIn(min, max), onValueChange = onChange, valueRange = min..max,
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = AccentA, inactiveTrackColor = Card2)
+        )
+    }
+}
+
+@Composable
 fun EqScreen(onBack: () -> Unit) {
     val info = Engine.eqInfo
     Column(Modifier.fillMaxSize()) {
@@ -162,13 +177,25 @@ fun EqScreen(onBack: () -> Unit) {
                 }
             }
             Section("Bass booster") {
-                Text("Mức: ${Engine.bassStrength / 10}%", color = Dim)
-                Slider(
-                    value = Engine.bassStrength.toFloat(), onValueChange = { Engine.setBass(it.toInt()) },
-                    valueRange = 0f..1000f,
-                    colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = AccentA, inactiveTrackColor = Card2)
-                )
+                LabeledSlider("Mức bass", "${Engine.bassStrength / 10}%", Engine.bassStrength.toFloat(), 0f, 1000f) { Engine.setBass(it.toInt()) }
                 Text("Một số máy không hỗ trợ bass booster.", color = Dim, fontSize = 12.sp)
+            }
+            Section("Nâng cao") {
+                LabeledSlider("Tiền khuếch đại (preamp)", "%+.1f dB".format(Engine.preamp / 100f), Engine.preamp.toFloat(), -1200f, 1200f) {
+                    Engine.setPreamp(it.toInt())
+                }
+                CheckRow("Chống vỡ tiếng (limiter)", Engine.limiterOn) { Engine.setLimiter(it) }
+                LabeledSlider("Âm trường (mở rộng stereo)", "${Engine.virtStrength / 10}%", Engine.virtStrength.toFloat(), 0f, 1000f) {
+                    Engine.setVirtualizer(it.toInt())
+                }
+                LabeledSlider("Tăng âm lượng", "+%.1f dB".format(Engine.loudGain / 100f), Engine.loudGain.toFloat(), 0f, 1200f) {
+                    Engine.setLoudness(it.toInt())
+                }
+                Text(
+                    "Tiền khuếch đại và limiter dùng bộ xử lý âm thanh của Android 9 trở lên; tăng âm lượng có nén nhẹ để không vỡ tiếng. " +
+                        "Máy không hỗ trợ thì mục tương ứng không có tác dụng.",
+                    color = Dim, fontSize = 12.sp
+                )
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -176,20 +203,6 @@ fun EqScreen(onBack: () -> Unit) {
 }
 
 // ------------------------------------------------------------------ Cài đặt
-
-private fun csvCounts(store: PointStore): String {
-    val (a, s) = try { store.load() } catch (e: Exception) { Pair(emptyList<Pt>(), emptyList<Pt>()) }
-    return "Đang dùng: ${a.size} camera/cảnh báo, ${s.size} biển giới hạn tốc độ"
-}
-
-private fun importCsv(ctx: Context, store: PointStore, uri: Uri, kind: String) {
-    try {
-        ctx.contentResolver.openInputStream(uri)?.use { input ->
-            store.fileFor(kind).outputStream().use { out -> input.copyTo(out) }
-        }
-    } catch (e: Exception) {
-    }
-}
 
 @Composable
 fun CheckRow(text: String, checked: Boolean, onChange: (Boolean) -> Unit) {
@@ -205,18 +218,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     val act = ctx as? MainActivity
     val prefs = Engine.prefs
     val scope = rememberCoroutineScope()
-    val store = remember { PointStore(ctx) }
-    var tts by remember { mutableStateOf(prefs.getBoolean("tts", true)) }
-    var online by remember { mutableStateOf(prefs.getBoolean("online", true)) }
-    var locAlways by remember { mutableStateOf(prefs.getInt("loc_mode", 0) == 1) }
     var lockLyrics by remember { mutableStateOf(prefs.getBoolean("lock_lyrics", true)) }
     var notifExtra by remember { mutableStateOf(prefs.getString("notif_extra", "shuffle") ?: "shuffle") }
-    var goongKey by remember { mutableStateOf(prefs.getString("goong_key", "") ?: "") }
-    var goongTest by remember { mutableStateOf("") }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
-    var urlA by remember { mutableStateOf(DataSync.urlAlerts()) }
-    var urlS by remember { mutableStateOf(DataSync.urlSigns()) }
-    var csvInfo by remember { mutableStateOf("Đang đọc dữ liệu...") }
     var canWrite by remember { mutableStateOf(Tags.canWrite()) }
     var capEnabled by remember { mutableStateOf(prefs.getBoolean("cap_enabled", false)) }
     var capPkg by remember { mutableStateOf(prefs.getString("cap_pkg", "") ?: "") }
@@ -224,31 +228,25 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capX by remember { mutableStateOf(prefs.getInt("cap_x", 4)) }
     var capY by remember { mutableStateOf(prefs.getInt("cap_y", 8)) }
     var capS by remember { mutableStateOf(prefs.getInt("cap_size", 92)) }
+    var capBand by remember { mutableStateOf(prefs.getBoolean("cap_band", true)) }
+    var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 4)) }
+    var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 14)) }
+    var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 92)) }
+    var capBc by remember { mutableStateOf(prefs.getInt("cap_bc", 50)) }
     var pickingApp by remember { mutableStateOf(false) }
     var rootInfo by remember { mutableStateOf("") }
-    fun setCrop(x: Int, y: Int, sz: Int) {
-        capX = x; capY = y; capS = sz
-        prefs.edit().putInt("cap_x", x).putInt("cap_y", y).putInt("cap_size", sz).apply()
+
+    fun putInt(k: String, v: Int) { prefs.edit().putInt(k, v).apply() }
+    fun setDioto() {
+        capX = 4; capY = 8; capS = 92; capRx = 4; capRy = 14; capRw = 92; capBc = 50
+        prefs.edit().putInt("cap_x", 4).putInt("cap_y", 8).putInt("cap_size", 92)
+            .putInt("cap_rx", 4).putInt("cap_ry", 14).putInt("cap_rw", 92).putInt("cap_bc", 50).apply()
     }
 
     LaunchedEffect(Unit) {
         while (true) {
             canWrite = Tags.canWrite()
             delay(1000)
-        }
-    }
-    LaunchedEffect(Diag.sync) { csvInfo = withContext(Dispatchers.IO) { csvCounts(store) } }
-
-    val pickAlerts = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            withContext(Dispatchers.IO) { importCsv(ctx, store, uri, "alerts") }
-            csvInfo = withContext(Dispatchers.IO) { csvCounts(store) }
-        }
-    }
-    val pickSigns = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            withContext(Dispatchers.IO) { importCsv(ctx, store, uri, "signs") }
-            csvInfo = withContext(Dispatchers.IO) { csvCounts(store) }
         }
     }
 
@@ -258,14 +256,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            CSection("Quyền truy cập và dịch vụ", true) {
+            CSection("Quyền truy cập", true) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    GradBtn("Cấp quyền") { act?.requestPerms() }
+                    GradBtn("Cấp quyền nhạc, thông báo") { act?.requestPerms() }
                     SoftBtn("Bật dịch vụ") { ctx.startServiceSafe() }
-                    SoftBtn("Dừng dịch vụ") {
-                        Engine.player.stop()
-                        ctx.stopService(Intent(ctx, MusicService::class.java))
-                    }
                 }
                 Text(
                     if (canWrite) "✓ Đã cho phép ghi tag vào file nhạc" else "✗ Chưa cho phép ghi tag vào file nhạc",
@@ -290,58 +284,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            CSection("Cảnh báo giao thông") {
+            CSection("Hình DiOTO trên Android Auto (cần root)") {
                 Text(
-                    listOf(Diag.service, Diag.aa, Diag.gps, Diag.osmCam, Diag.osmLim, Diag.goong, Diag.sync).joinToString("\n"),
-                    fontSize = 12.sp, color = Dim
-                )
-                CheckRow("Đọc cảnh báo bằng giọng nói (TTS)", tts) { tts = it; prefs.edit().putBoolean("tts", it).apply() }
-                CheckRow("Tải thêm dữ liệu OpenStreetMap", online) { online = it; prefs.edit().putBoolean("online", it).apply() }
-                CheckRow("Luôn dùng GPS (tốn pin, chỉ để thử khi chưa nối xe)", locAlways) {
-                    locAlways = it; prefs.edit().putInt("loc_mode", if (it) 1 else 0).apply()
-                }
-                SoftBtn("Kiểm tra kết nối OSM") {
-                    scope.launch {
-                        Diag.test = "Đang kiểm tra..."
-                        Diag.test = withContext(Dispatchers.IO) { Overpass.test() }
-                    }
-                }
-                if (Diag.test.isNotEmpty()) Text(Diag.test, color = AccentA, fontSize = 12.sp)
-
-                Text("Goong Speed Limit API (tuỳ chọn, cần key do Goong cấp):", fontSize = 12.sp, color = Dim)
-                OutlinedTextField(
-                    goongKey, { goongKey = it; prefs.edit().putString("goong_key", it.trim()).apply() },
-                    label = { Text("Goong API key") }, singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                SoftBtn("Kiểm tra key") {
-                    scope.launch {
-                        goongTest = "Đang kiểm tra..."
-                        goongTest = withContext(Dispatchers.IO) { Goong.query(21.03055, 105.80106, null, goongKey.trim()).second }
-                    }
-                }
-                if (goongTest.isNotEmpty()) Text(goongTest, fontSize = 12.sp, color = AccentA)
-
-                Text("Dữ liệu camera / biển báo (CSV):", fontSize = 12.sp, color = Dim)
-                Text(csvInfo, fontSize = 12.sp, color = Dim)
-                OutlinedTextField(urlA, { urlA = it }, label = { Text("URL camera/cảnh báo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(urlS, { urlS = it }, label = { Text("URL biển giới hạn tốc độ") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    GradBtn("Cập nhật ngay") {
-                        prefs.edit().putString("url_alerts", urlA.trim()).putString("url_signs", urlS.trim()).apply()
-                        DataSync.syncAsync(true)
-                    }
-                    SoftBtn("Nhập CSV camera") { pickAlerts.launch(arrayOf("*/*")) }
-                    SoftBtn("Nhập CSV biển") { pickSigns.launch(arrayOf("*/*")) }
-                    SoftBtn("Xoá CSV nhập") {
-                        store.clear()
-                        scope.launch { csvInfo = withContext(Dispatchers.IO) { csvCounts(store) } }
-                    }
-                }
-            }
-
-            CSection("Hình Wyn / DiOTO thay ảnh bìa (thử nghiệm, cần root)") {
-                Text(
-                    "App được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên Android Auto. " +
+                    "DiOTO được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên xe. " +
                         "Khi ngắt kết nối, app đó sẽ bị đóng.",
                     fontSize = 12.sp, color = Dim
                 )
@@ -356,19 +301,35 @@ fun SettingsScreen(onBack: () -> Unit) {
                             rootInfo = r.ifBlank { "Không có phản hồi (chưa cấp quyền root cho app?)" }
                         }
                     }
-                    SoftBtn("Mẫu Wyn") { setCrop(26, 14, 72) }
-                    SoftBtn("Mẫu DiOTO") { setCrop(4, 8, 92) }
+                    SoftBtn("Mẫu DiOTO") { setDioto() }
                 }
                 if (rootInfo.isNotEmpty()) Text(rootInfo, fontSize = 12.sp, color = AccentA)
-                CropSlider("Trái", capX, 0, 100) { capX = it; prefs.edit().putInt("cap_x", it).apply() }
-                CropSlider("Trên", capY, 0, 100) { capY = it; prefs.edit().putInt("cap_y", it).apply() }
-                CropSlider("Cỡ", capS, 20, 100) { capS = it; prefs.edit().putInt("cap_size", it).apply() }
+
+                Text("Ảnh vuông (hiển thị đầy đủ):", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                CropSlider("Trái", capX, 0, 100) { capX = it; putInt("cap_x", it) }
+                CropSlider("Trên", capY, 0, 100) { capY = it; putInt("cap_y", it) }
+                CropSlider("Cỡ", capS, 20, 100) { capS = it; putInt("cap_size", it) }
+
+                CheckRow("Dải ngang cho chế độ thu nhỏ (khi xe hiện thông báo)", capBand) {
+                    capBand = it; prefs.edit().putBoolean("cap_band", it).apply()
+                }
+                if (capBand) {
+                    Text(
+                        "Dải ngang (rộng gấp đôi cao, bằng nửa hình vuông) được đặt ở giữa ảnh, nên khi Android Auto thu nhỏ " +
+                            "và cắt phần giữa, thông tin chính vẫn còn.",
+                        fontSize = 12.sp, color = Dim
+                    )
+                    CropSlider("Trái", capRx, 0, 100) { capRx = it; putInt("cap_rx", it) }
+                    CropSlider("Trên", capRy, 0, 100) { capRy = it; putInt("cap_ry", it) }
+                    CropSlider("Rộng", capRw, 20, 100) { capRw = it; putInt("cap_rw", it) }
+                    CropSlider("Vị trí dải", capBc, 35, 65) { capBc = it; putInt("cap_bc", it) }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GradBtn("Thử chụp") { ScreenCapture.start(ctx, capPkg, true) }
                     SoftBtn("Dừng") { ScreenCapture.manual = false; ScreenCapture.stop() }
                 }
                 Text(Diag.cap, fontSize = 12.sp, color = AccentA)
-                CapPreview(capX, capY, capS)
+                CapPreview(capX, capY, capS, capBand, capRx, capRy, capRw)
             }
 
             CSection("Radio online") {
@@ -391,8 +352,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 capPkg = pkg
                 capLabel = label
                 prefs.edit().putString("cap_pkg", pkg).putString("cap_label", label).apply()
-                val l = (label + pkg).lowercase()
-                if ("wyn" in l) setCrop(26, 14, 72) else if ("dioto" in l) setCrop(4, 8, 92)
+                if ("dioto" in (label + pkg).lowercase()) setDioto()
                 pickingApp = false
             },
             onDismiss = { pickingApp = false }
@@ -487,12 +447,12 @@ fun ScanScreen() {
                     ) {
                         Text(
                             p.label, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.clickable { Engine.songById(p.songId)?.let { Engine.editing = it } }
+                            modifier = Modifier.clickable { (Engine.pathMap()[p.path] ?: Engine.songById(p.songId))?.let { Engine.editing = it } }
                         )
                         Text(p.summary(), color = Dim, fontSize = 12.sp)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GradBtn("Áp dụng") { LibraryCheck.apply(p) }
-                            SoftBtn("Bỏ qua") { LibraryCheck.proposals.remove(p) }
+                            SoftBtn("Bỏ qua") { LibraryCheck.dismiss(p) }
                         }
                     }
                 }
@@ -500,7 +460,7 @@ fun ScanScreen() {
             if (shown.isNotEmpty()) {
                 item { Text("Danh sách (${shown.size} bài)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
                 items(shown.take(300)) { st ->
-                    val song = Engine.songById(st.id)
+                    val song = Engine.pathMap()[st.path] ?: Engine.songById(st.id)
                     Column(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardC)
                             .clickable { song?.let { Engine.editing = it } }.padding(10.dp)
@@ -743,22 +703,52 @@ fun CropSlider(label: String, value: Int, min: Int, max: Int, onChange: (Int) ->
     }
 }
 
-/** Hình chụp mới nhất từ app, kèm khung vuông là vùng sẽ dùng làm ảnh bìa. */
+/** Hình chụp mới nhất, khung vuông (cam), khung dải ngang (hồng) và hai kiểu hiển thị trên xe. */
 @Composable
-fun CapPreview(xp: Int, yp: Int, sp: Int) {
+fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: Int) {
     val bmp = ScreenCapture.preview
     if (bmp == null) {
         Text("Chưa có hình. Bấm \"Thử chụp\" để xem trước.", color = Dim, fontSize = 12.sp)
     } else {
-        Box(Modifier.fillMaxWidth(0.55f).aspectRatio(bmp.width.toFloat() / bmp.height)) {
-            Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
-            Canvas(Modifier.fillMaxSize()) {
-                val w = size.width
-                val h = size.height
-                val cw = w * sp / 100f
-                val x0 = (w * xp / 100f).coerceIn(0f, (w - cw).coerceAtLeast(0f))
-                val y0 = (h * yp / 100f).coerceIn(0f, (h - cw).coerceAtLeast(0f))
-                drawRect(AccentA, Offset(x0, y0), Size(cw, cw), style = Stroke(width = 3.dp.toPx()))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.fillMaxWidth(0.55f).aspectRatio(bmp.width.toFloat() / bmp.height)) {
+                Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
+                Canvas(Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    val cw = w * sp / 100f
+                    val x0 = (w * xp / 100f).coerceIn(0f, (w - cw).coerceAtLeast(0f))
+                    val y0 = (h * yp / 100f).coerceIn(0f, (h - cw).coerceAtLeast(0f))
+                    drawRect(AccentA, Offset(x0, y0), Size(cw, cw), style = Stroke(width = 3.dp.toPx()))
+                    if (band) {
+                        val bw = w * rw / 100f
+                        val bh = bw / 2f
+                        val bx = (w * rx / 100f).coerceIn(0f, (w - bw).coerceAtLeast(0f))
+                        val by = (h * ry / 100f).coerceIn(0f, (h - bh).coerceAtLeast(0f))
+                        drawRect(AccentB, Offset(bx, by), Size(bw, bh), style = Stroke(width = 3.dp.toPx()))
+                    }
+                }
+            }
+            val art = ScreenCapture.previewArt
+            if (art != null) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Ảnh gửi lên xe", fontSize = 11.sp, color = Dim)
+                        Image(
+                            bitmap = art.asImageBitmap(), contentDescription = null,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(10.dp))
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Khi thu nhỏ (cắt giữa)", fontSize = 11.sp, color = Dim)
+                        Box(Modifier.fillMaxWidth().aspectRatio(2f).clip(RoundedCornerShape(10.dp))) {
+                            Image(
+                                bitmap = art.asImageBitmap(), contentDescription = null,
+                                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                }
             }
         }
     }
