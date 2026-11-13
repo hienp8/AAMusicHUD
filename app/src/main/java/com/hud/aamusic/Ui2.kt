@@ -889,7 +889,8 @@ fun DeleteConfirm(s: Song) {
     )
 }
 
-/** Lời bài hát toàn màn hình, dùng trong LyricsActivity (hiện được trên màn hình khoá). */
+/** Lời bài hát toàn màn hình, dùng trong LyricsActivity (hiện được trên màn hình khoá).
+ *  Khi đang chụp DiOTO/Wyn: dùng ảnh chụp làm nền, lời đè lên trên. */
 @Composable
 fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
     LaunchedEffect(Unit) {
@@ -899,7 +900,22 @@ fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
         }
     }
     val s = Engine.current
+    val capArt = ScreenCapture.previewArt
+    val showCap = ScreenCapture.running && capArt != null
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // Nền: ảnh chụp Wyn/DiOTO (nếu đang capture) hoặc đen
+        if (showCap) {
+            Image(
+                bitmap = capArt!!.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            // Lớp tối nhẹ để chữ lời dễ đọc
+            Box(Modifier.fillMaxSize().background(Color(0x99000000)))
+        }
+
         Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 s?.let { Engine.title(it) } ?: "AA Music", fontSize = 20.sp, fontWeight = FontWeight.Bold,
