@@ -78,7 +78,7 @@ class MusicService : MediaBrowserServiceCompat() {
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
-            "cap_enabled", "cap_pkg" -> updateCapture()
+            "cap_enabled", "cap_pkg", "cap_always" -> updateCapture()
             "lock_lyrics" -> { lyricLine = ""; scheduleLyric(); pushMeta() }
             "notif_extra" -> updateState()
         }
@@ -178,7 +178,8 @@ class MusicService : MediaBrowserServiceCompat() {
     private fun updateCapture() {
         val prefs = Engine.prefs
         val pkg = prefs.getString("cap_pkg", "") ?: ""
-        val want = prefs.getBoolean("cap_enabled", false) && aaConnected && pkg.isNotBlank()
+        val always = prefs.getBoolean("cap_always", false)
+        val want = prefs.getBoolean("cap_enabled", false) && (aaConnected || always) && pkg.isNotBlank()
         if (want) {
             ScreenCapture.start(this, pkg, false)
         } else if (!ScreenCapture.manual && ScreenCapture.running) {

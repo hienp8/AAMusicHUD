@@ -2,7 +2,6 @@ package com.hud.aamusic
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.compose.foundation.layout.size
@@ -224,6 +223,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
     var canWrite by remember { mutableStateOf(Tags.canWrite()) }
     var capEnabled by remember { mutableStateOf(prefs.getBoolean("cap_enabled", false)) }
+    var capAlways by remember { mutableStateOf(prefs.getBoolean("cap_always", false)) }
+    var capPrivate by remember { mutableStateOf(prefs.getBoolean("cap_private", true)) }
     var capPkg by remember { mutableStateOf(prefs.getString("cap_pkg", "") ?: "") }
     var capLabel by remember { mutableStateOf(prefs.getString("cap_label", "") ?: "") }
     var capX by remember { mutableStateOf(prefs.getInt("cap_x", 4)) }
@@ -233,14 +234,15 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 4)) }
     var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 14)) }
     var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 92)) }
+    var capBc by remember { mutableStateOf(prefs.getInt("cap_bc", 50)) }
     var pickingApp by remember { mutableStateOf(false) }
     var rootInfo by remember { mutableStateOf("") }
 
     fun putInt(k: String, v: Int) { prefs.edit().putInt(k, v).apply() }
     fun setDioto() {
-        capX = 4; capY = 8; capS = 92; capRx = 4; capRy = 14; capRw = 92
+        capX = 4; capY = 8; capS = 92; capRx = 4; capRy = 14; capRw = 92; capBc = 50
         prefs.edit().putInt("cap_x", 4).putInt("cap_y", 8).putInt("cap_size", 92)
-            .putInt("cap_rx", 4).putInt("cap_ry", 14).putInt("cap_rw", 92).apply()
+            .putInt("cap_rx", 4).putInt("cap_ry", 14).putInt("cap_rw", 92).putInt("cap_bc", 50).apply()
     }
 
     LaunchedEffect(Unit) {
@@ -291,6 +293,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                     fontSize = 12.sp, color = Dim
                 )
                 CheckRow("Bật khi kết nối Android Auto", capEnabled) { capEnabled = it; prefs.edit().putBoolean("cap_enabled", it).apply() }
+                CheckRow("Chụp cả khi chưa kết nối Android Auto (để xem trên màn hình khoá điện thoại)", capAlways) {
+                    capAlways = it; prefs.edit().putBoolean("cap_always", it).apply()
+                }
+                CheckRow("Màn hình ảo riêng tư (giữ hình DiOTO khi khoá máy, không hiện đồng hồ)", capPrivate) {
+                    capPrivate = it; prefs.edit().putBoolean("cap_private", it).apply()
+                }
+                Text("Đổi hai mục trên xong, bấm Dừng rồi Thử chụp (hoặc ngắt và nối lại Android Auto) để áp dụng.", fontSize = 11.sp, color = Dim)
                 Text("App: " + (if (capPkg.isEmpty()) "(chưa chọn)" else "$capLabel ($capPkg)"), fontSize = 13.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     GradBtn("Chọn app") { pickingApp = true }
@@ -315,13 +324,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
                 if (capBand) {
                     Text(
-                        "Dải ngang (rộng gấp đôi cao) dùng để xem trước vùng quan trọng khi Android Auto thu nhỏ ảnh. " +
-                            "Ảnh full gửi lên xe chỉ lấy khung vuông (cam), không ghép dải này nữa để tránh hiện \"cửa sổ chia đôi\".",
+                        "Dải ngang (rộng gấp đôi cao, bằng nửa hình vuông) được đặt ở giữa ảnh, nên khi Android Auto thu nhỏ " +
+                            "và cắt phần giữa, thông tin chính vẫn còn.",
                         fontSize = 12.sp, color = Dim
                     )
                     CropSlider("Trái", capRx, 0, 100) { capRx = it; putInt("cap_rx", it) }
                     CropSlider("Trên", capRy, 0, 100) { capRy = it; putInt("cap_ry", it) }
                     CropSlider("Rộng", capRw, 20, 100) { capRw = it; putInt("cap_rw", it) }
+                    CropSlider("Vị trí dải", capBc, 35, 65) { capBc = it; putInt("cap_bc", it) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GradBtn("Thử chụp") { ScreenCapture.start(ctx, capPkg, true) }
@@ -702,8 +712,7 @@ fun CropSlider(label: String, value: Int, min: Int, max: Int, onChange: (Int) ->
     }
 }
 
-/** Hình chụp mới nhất, khung vuông (cam), khung dải ngang (hồng) để xem trước, và hai kiểu hiển thị trên xe.
- *  Ảnh full chỉ lấy khung vuông (không ghép dải) để tránh hiện cửa sổ chia đôi. */
+/** Hình chụp mới nhất, khung vuông (cam), khung dải ngang (hồng) và hai kiểu hiển thị trên xe. */
 @Composable
 fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: Int) {
     val bmp = ScreenCapture.preview
@@ -742,36 +751,10 @@ fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: I
                     Column(Modifier.weight(1f)) {
                         Text("Khi thu nhỏ (cắt giữa)", fontSize = 11.sp, color = Dim)
                         Box(Modifier.fillMaxWidth().aspectRatio(2f).clip(RoundedCornerShape(10.dp))) {
-                            // Nếu bật dải ngang: hiện vùng hồng (để xem trước phần quan trọng khi thu nhỏ)
-                            // Không ghép vào ảnh full nữa để tránh bị hiện "cửa sổ chia đôi"
-                            if (band) {
-                                val bw = (bmp.width * rw / 100f).toInt().coerceIn(32, bmp.width)
-                                val bh = (bw / 2).coerceIn(16, bmp.height)
-                                val bx = (bmp.width * rx / 100f).toInt().coerceIn(0, bmp.width - bw)
-                                val by = (bmp.height * ry / 100f).toInt().coerceIn(0, (bmp.height - bh).coerceAtLeast(0))
-                                val bandBmp = try {
-                                    Bitmap.createScaledBitmap(
-                                        Bitmap.createBitmap(bmp, bx, by, bw, bh),
-                                        512, 256, true
-                                    )
-                                } catch (e: Exception) { null }
-                                if (bandBmp != null) {
-                                    Image(
-                                        bitmap = bandBmp.asImageBitmap(), contentDescription = null,
-                                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    Image(
-                                        bitmap = art.asImageBitmap(), contentDescription = null,
-                                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-                            } else {
-                                Image(
-                                    bitmap = art.asImageBitmap(), contentDescription = null,
-                                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
-                                )
-                            }
+                            Image(
+                                bitmap = art.asImageBitmap(), contentDescription = null,
+                                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                            )
                         }
                     }
                 }
@@ -889,8 +872,7 @@ fun DeleteConfirm(s: Song) {
     )
 }
 
-/** Lời bài hát toàn màn hình, dùng trong LyricsActivity (hiện được trên màn hình khoá).
- *  Khi đang chụp DiOTO/Wyn: dùng ảnh chụp làm nền, lời đè lên trên. */
+/** Lời bài hát toàn màn hình, dùng trong LyricsActivity (hiện được trên màn hình khoá). */
 @Composable
 fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
     LaunchedEffect(Unit) {
@@ -900,29 +882,30 @@ fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
         }
     }
     val s = Engine.current
-    val capArt = ScreenCapture.previewArt
-    val showCap = ScreenCapture.running && capArt != null
-
+    var showImage by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // Nền: ảnh chụp Wyn/DiOTO (nếu đang capture) hoặc đen
-        if (showCap) {
-            Image(
-                bitmap = capArt!!.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-            // Lớp tối nhẹ để chữ lời dễ đọc
-            Box(Modifier.fillMaxSize().background(Color(0x99000000)))
-        }
-
         Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 s?.let { Engine.title(it) } ?: "AA Music", fontSize = 20.sp, fontWeight = FontWeight.Bold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             Text(s?.let { Engine.artist(it) } ?: "", color = Dim, fontSize = 13.sp)
-            Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) { LyricsView() }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                Pill("Lời bài hát", !showImage) { showImage = false }
+                Pill("Hình DiOTO", showImage) { showImage = true }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) {
+                if (showImage) {
+                    val f = ScreenCapture.liveFrame
+                    if (f != null) {
+                        Image(bitmap = f.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    } else {
+                        EmptyHint("Chưa có hình. Bật mục Hình DiOTO trong Cài đặt, rồi kết nối Android Auto hoặc bật \"Chụp cả khi chưa kết nối\".")
+                    }
+                } else {
+                    LyricsView()
+                }
+            }
             Row(
                 Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically

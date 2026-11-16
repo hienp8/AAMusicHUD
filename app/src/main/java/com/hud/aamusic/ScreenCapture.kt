@@ -1,7 +1,11 @@
 package com.hud.aamusic
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -9,6 +13,7 @@ import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -16,9 +21,12 @@ import androidx.compose.runtime.setValue
 import kotlin.concurrent.thread
 
 /**
- * Chạy app (Wyn, DiOTO...) trên một màn hình ảo, chụp hình mỗi ~1,5 giây, cắt hình vuông
+ * Chạy app (DiOTO, Wyn...) trên một màn hình ảo, chụp hình mỗi ~1,5 giây, cắt hình vuông
  * và dùng làm ảnh bìa trên Android Auto. Cần root (để mở app trên màn hình ảo).
  * Không đọc hay sao chép dữ liệu của app, chỉ chụp lại giao diện đang hiển thị.
+ *
+ * Để chạy khi khoá máy: màn hình ảo riêng tư (hệ thống không vẽ đồng hồ khoá màn hình lên đó),
+ * giữ CPU thức, loại app khỏi chế độ Doze và mở lại app khi màn hình bật / tắt / mở khoá.
  */
 object ScreenCapture {
     private val main = Handler(Looper.getMainLooper())
@@ -29,10 +37,16 @@ object ScreenCapture {
     private var reader: ImageReader? = null
     private var ht: HandlerThread? = null
     private var pkg = ""
+    private var comp = ""
+    private var displayId = -1
+    private var wl: PowerManager.WakeLock? = null
+    private var receiver: BroadcastReceiver? = null
+    private var appCtx: Context? = null
 
     var onFrame: ((Bitmap) -> Unit)? = null
-    var preview by mutableStateOf<Bitmap?>(null)
-    var previewArt by mutableStateOf<Bitmap?>(null)
+    var preview by mutableStateOf<Bitmap?>(null)       // khung hình thu nhỏ để chỉnh vùng cắt
+    var previewArt by mutableStateOf<Bitmap?>(null)    // ảnh gửi lên xe
+    var liveFrame by mutableStateOf<Bitmap?>(null)     // khung hình đầy đủ (xem trên màn hình khoá điện thoại)
 
     private val pkgRe = Regex("^[A-Za-z0-9_.]+$")
 
@@ -47,6 +61,7 @@ object ScreenCapture {
         this.pkg = pkg
         Diag.cap = "Chụp màn hình: đang khởi động..."
         val app = ctx.applicationContext
+        appCtx = app
         thread {
             val err = try { doStart(app, pkg) } catch (e: Throwable) { "${e.javaClass.simpleName}: ${e.message}" }
             if (err != null) {
@@ -56,6 +71,22 @@ object ScreenCapture {
             }
         }
     }
+
+    private fun createVd(dm: DisplayManager, w: Int, h: Int, dpi: Int, rd: ImageReader, public: Boolean): VirtualDisplay? {
+        val flags = if (public) {
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+        } else {
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+        }
+        return try {
+            dm.createVirtualDisplay("AAMusicCap", w, h, dpi, rd.surface, flags, null, null)
+        } catch (e: SecurityException) {
+            null
+        }
+    }
+
+    private fun launchApp(id: Int, flags: String): Pair<Int, String> =
+        Root.run("am start --display $id -f $flags -n $comp")
 
     private fun doStart(ctx: Context, pkg: String): String? {
         val (rc, out) = Root.run("id")
@@ -74,24 +105,83 @@ object ScreenCapture {
         rd.setOnImageAvailableListener({ r -> grab(r, w, h) }, Handler(handlerThread.looper))
 
         val dm = ctx.getSystemService(DisplayManager::class.java)
-        val flagsPublic = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-        vd = try {
-            dm.createVirtualDisplay("AAMusicCap", w, h, dpi, rd.surface, flagsPublic, null, null)
-        } catch (e: SecurityException) {
-            dm.createVirtualDisplay("AAMusicCap", w, h, dpi, rd.surface, DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY, null, null)
+        // Màn hình ảo riêng tư trước (không bị vẽ đồng hồ khoá màn hình), dự phòng là công khai
+        var priv = Engine.prefs.getBoolean("cap_private", true)
+        var v = createVd(dm, w, h, dpi, rd, !priv)
+        if (v == null && priv) {
+            priv = false
+            v = createVd(dm, w, h, dpi, rd, true)
         }
-        val display = vd?.display ?: return "không tạo được màn hình ảo"
-        val id = display.displayId
+        if (v == null) return "không tạo được màn hình ảo"
+        vd = v
 
         val (_, o2) = Root.run("cmd package resolve-activity --brief -c android.intent.category.LAUNCHER $pkg")
-        val comp = o2.lines().map { it.trim() }.lastOrNull { it.contains("/") && !it.contains(" ") }
+        comp = o2.lines().map { it.trim() }.lastOrNull { it.contains("/") && !it.contains(" ") }
             ?: return "không tìm thấy màn hình khởi chạy của $pkg"
-        val (r3, o3) = Root.run("am start --display $id -f 0x10008000 -n $comp")
-        if (r3 != 0 || o3.contains("Error", ignoreCase = true)) {
-            return "không mở được app trên màn hình ảo: ${o3.take(140)}"
+
+        var res = launchApp(v.display.displayId, "0x10008000")
+        var failed = res.first != 0 || res.second.contains("Error", ignoreCase = true)
+        if (failed && priv) {
+            // Dự phòng: màn hình ảo công khai
+            try { v.release() } catch (e: Exception) { }
+            priv = false
+            val v2 = createVd(dm, w, h, dpi, rd, true) ?: return "không tạo được màn hình ảo công khai"
+            v = v2
+            vd = v2
+            res = launchApp(v2.display.displayId, "0x10008000")
+            failed = res.first != 0 || res.second.contains("Error", ignoreCase = true)
         }
-        main.post { Diag.cap = "Chụp màn hình: đang chạy ($pkg trên màn hình ảo #$id)" }
+        if (failed) return "không mở được app trên màn hình ảo: ${res.second.take(140)}"
+        displayId = v.display.displayId
+
+        // Giữ chạy khi khoá máy
+        try {
+            val pm = ctx.getSystemService(PowerManager::class.java)
+            val lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "aamusic:capture")
+            lock.setReferenceCounted(false)
+            lock.acquire(12L * 3600L * 1000L)
+            wl = lock
+        } catch (e: Exception) { }
+        Root.run("cmd deviceidle whitelist +$pkg")
+        main.post { registerScreenReceiver(ctx) }
+
+        val mode = if (priv) "riêng tư" else "công khai"
+        main.post {
+            Diag.cap = "Chụp màn hình: đang chạy ($pkg, màn hình ảo #$displayId, $mode)"
+            main.removeCallbacks(relaunchRunnable)
+            main.postDelayed(relaunchRunnable, 30000L)
+        }
         return null
+    }
+
+    /** Mở lại app trên màn hình ảo (không xoá tác vụ) để phòng khi hệ thống đóng nó lúc khoá máy. */
+    private val relaunchRunnable = object : Runnable {
+        override fun run() {
+            if (!running) return
+            val id = displayId
+            if (id >= 0 && comp.isNotEmpty()) thread { launchApp(id, "0x10000000") }
+            main.postDelayed(this, 30000L)
+        }
+    }
+
+    private fun registerScreenReceiver(ctx: Context) {
+        if (receiver != null) return
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                // Màn hình bật / tắt / mở khoá: mở lại app sau 1,5 giây
+                main.removeCallbacks(relaunchRunnable)
+                main.postDelayed(relaunchRunnable, 1500L)
+            }
+        }
+        val f = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        try {
+            ctx.registerReceiver(r, f)
+            receiver = r
+        } catch (e: Exception) { }
     }
 
     private fun grab(r: ImageReader, w: Int, h: Int) {
@@ -115,13 +205,25 @@ object ScreenCapture {
             val y0 = (h * yp / 100f).toInt().coerceIn(0, (h - cw).coerceAtLeast(0))
             val ch = cw.coerceAtMost(h - y0)
             val crop = Bitmap.createBitmap(full, x0, y0, cw, ch)
-            // Ảnh vuông full gửi lên xe (không ghép dải ngang để tránh bị "chia đôi" khi hiển thị full)
-            val art = Bitmap.createScaledBitmap(crop, 512, 512, true)
+            var art = Bitmap.createScaledBitmap(crop, 512, 512, true)
+            // Khi Android Auto thu nhỏ ảnh bìa còn một nửa (thường cắt phần giữa), dải ngang 2:1 này nằm ở giữa ảnh
+            if (prefs.getBoolean("cap_band", true)) {
+                val rw = (w * prefs.getInt("cap_rw", 92) / 100f).toInt().coerceIn(32, w)
+                val rh = (rw / 2).coerceIn(16, h)
+                val rx = (w * prefs.getInt("cap_rx", 4) / 100f).toInt().coerceIn(0, w - rw)
+                val ry = (h * prefs.getInt("cap_ry", 14) / 100f).toInt().coerceIn(0, (h - rh).coerceAtLeast(0))
+                val band = Bitmap.createScaledBitmap(Bitmap.createBitmap(full, rx, ry, rw, rh), 512, 256, true)
+                val out = art.copy(Bitmap.Config.ARGB_8888, true)
+                val top = (512 * prefs.getInt("cap_bc", 50) / 100f - 128f).coerceIn(0f, 256f)
+                Canvas(out).drawBitmap(band, 0f, top, null)
+                art = out
+            }
             val finalArt = art
             val small = Bitmap.createScaledBitmap(full, w / 2, h / 2, true)
             main.post {
                 preview = small
                 previewArt = finalArt
+                liveFrame = full
                 onFrame?.invoke(finalArt)
             }
         } catch (e: Throwable) {
@@ -134,15 +236,25 @@ object ScreenCapture {
         if (!running && vd == null) return
         running = false
         val p = pkg
+        main.removeCallbacks(relaunchRunnable)
         thread {
             // Đóng app trước để nó không nhảy sang màn hình điện thoại khi màn hình ảo bị huỷ
-            if (p.isNotEmpty() && pkgRe.matches(p)) Root.run("am force-stop $p")
+            if (p.isNotEmpty() && pkgRe.matches(p)) {
+                Root.run("am force-stop $p")
+                Root.run("cmd deviceidle whitelist -$p")
+            }
             cleanup()
             main.post { Diag.cap = "Chụp màn hình: đã dừng" }
         }
     }
 
     private fun cleanup() {
+        main.post { main.removeCallbacks(relaunchRunnable) }
+        try { receiver?.let { appCtx?.unregisterReceiver(it) } } catch (e: Exception) { }
+        receiver = null
+        try { wl?.let { if (it.isHeld) it.release() } } catch (e: Exception) { }
+        wl = null
+        displayId = -1
         try { vd?.release() } catch (e: Exception) { }
         vd = null
         try { reader?.close() } catch (e: Exception) { }
