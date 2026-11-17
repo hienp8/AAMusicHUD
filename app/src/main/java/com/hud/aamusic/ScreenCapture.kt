@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -197,28 +200,39 @@ object ScreenCapture {
             val full = if (pw != w) Bitmap.createBitmap(raw, 0, 0, w, h) else raw
 
             val prefs = Engine.prefs
-            val xp = prefs.getInt("cap_x", 4)
-            val yp = prefs.getInt("cap_y", 8)
-            val sp = prefs.getInt("cap_size", 92)
-            val cw = (w * sp / 100f).toInt().coerceIn(32, w)
-            val x0 = (w * xp / 100f).toInt().coerceIn(0, w - cw)
-            val y0 = (h * yp / 100f).toInt().coerceIn(0, (h - cw).coerceAtLeast(0))
-            val ch = cw.coerceAtMost(h - y0)
-            val crop = Bitmap.createBitmap(full, x0, y0, cw, ch)
-            var art = Bitmap.createScaledBitmap(crop, 512, 512, true)
-            // Khi Android Auto thu nhỏ ảnh bìa còn một nửa (thường cắt phần giữa), dải ngang 2:1 này nằm ở giữa ảnh
+            val finalArt: Bitmap
             if (prefs.getBoolean("cap_band", true)) {
+                // Ảnh gửi lên xe là hình vuông lấy quanh dải ngang đã chọn (dải nằm đúng nửa giữa).
+                // Khi Android Auto cắt giữa còn nửa ảnh thì dải vẫn đầy đủ; không ghép chồng hình.
                 val rw = (w * prefs.getInt("cap_rw", 92) / 100f).toInt().coerceIn(32, w)
-                val rh = (rw / 2).coerceIn(16, h)
                 val rx = (w * prefs.getInt("cap_rx", 4) / 100f).toInt().coerceIn(0, w - rw)
+                val rh = rw / 2
                 val ry = (h * prefs.getInt("cap_ry", 14) / 100f).toInt().coerceIn(0, (h - rh).coerceAtLeast(0))
-                val band = Bitmap.createScaledBitmap(Bitmap.createBitmap(full, rx, ry, rw, rh), 512, 256, true)
-                val out = art.copy(Bitmap.Config.ARGB_8888, true)
-                val top = (512 * prefs.getInt("cap_bc", 50) / 100f - 128f).coerceIn(0f, 256f)
-                Canvas(out).drawBitmap(band, 0f, top, null)
-                art = out
+                val side = rw
+                val top = ry + rh / 2 - side / 2
+                val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+                val cv = Canvas(out)
+                cv.drawColor(0xFF0B0D12.toInt())
+                val sy0 = top.coerceAtLeast(0)
+                val sy1 = (top + side).coerceAtMost(h)
+                if (sy1 > sy0) {
+                    val k = 512f / side
+                    cv.drawBitmap(
+                        full, Rect(rx, sy0, rx + side, sy1),
+                        RectF(0f, (sy0 - top) * k, 512f, (sy1 - top) * k), Paint(Paint.FILTER_BITMAP_FLAG)
+                    )
+                }
+                finalArt = out
+            } else {
+                val xp = prefs.getInt("cap_x", 4)
+                val yp = prefs.getInt("cap_y", 8)
+                val sp = prefs.getInt("cap_size", 92)
+                val cw = (w * sp / 100f).toInt().coerceIn(32, w)
+                val x0 = (w * xp / 100f).toInt().coerceIn(0, w - cw)
+                val y0 = (h * yp / 100f).toInt().coerceIn(0, (h - cw).coerceAtLeast(0))
+                val ch = cw.coerceAtMost(h - y0)
+                finalArt = Bitmap.createScaledBitmap(Bitmap.createBitmap(full, x0, y0, cw, ch), 512, 512, true)
             }
-            val finalArt = art
             val small = Bitmap.createScaledBitmap(full, w / 2, h / 2, true)
             main.post {
                 preview = small

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.BackHandler
@@ -237,15 +238,18 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 4)) }
     var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 14)) }
     var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 92)) }
-    var capBc by remember { mutableStateOf(prefs.getInt("cap_bc", 50)) }
     var pickingApp by remember { mutableStateOf(false) }
     var rootInfo by remember { mutableStateOf("") }
 
     fun putInt(k: String, v: Int) { prefs.edit().putInt(k, v).apply() }
     fun setDioto() {
-        capX = 4; capY = 8; capS = 92; capRx = 4; capRy = 14; capRw = 92; capBc = 50
+        capX = 4; capY = 8; capS = 92; capRx = 4; capRy = 14; capRw = 92
         prefs.edit().putInt("cap_x", 4).putInt("cap_y", 8).putInt("cap_size", 92)
-            .putInt("cap_rx", 4).putInt("cap_ry", 14).putInt("cap_rw", 92).putInt("cap_bc", 50).apply()
+            .putInt("cap_rx", 4).putInt("cap_ry", 14).putInt("cap_rw", 92).apply()
+    }
+    fun setWyn() {
+        capRx = 26; capRy = 23; capRw = 70
+        prefs.edit().putInt("cap_rx", 26).putInt("cap_ry", 23).putInt("cap_rw", 70).apply()
     }
 
     LaunchedEffect(Unit) {
@@ -331,27 +335,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                         }
                     }
                     SoftBtn("Mẫu DiOTO") { setDioto() }
+                    SoftBtn("Mẫu Wyn") { setWyn() }
                 }
                 if (rootInfo.isNotEmpty()) Text(rootInfo, fontSize = 12.sp, color = AccentA)
 
-                Text("Ảnh vuông (hiển thị đầy đủ):", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                CropSlider("Trái", capX, 0, 100) { capX = it; putInt("cap_x", it) }
-                CropSlider("Trên", capY, 0, 100) { capY = it; putInt("cap_y", it) }
-                CropSlider("Cỡ", capS, 20, 100) { capS = it; putInt("cap_size", it) }
-
-                CheckRow("Dải ngang cho chế độ thu nhỏ (khi xe hiện thông báo)", capBand) {
+                CheckRow("Chọn theo dải ngang (khuyến nghị)", capBand) {
                     capBand = it; prefs.edit().putBoolean("cap_band", it).apply()
                 }
                 if (capBand) {
                     Text(
-                        "Dải ngang (rộng gấp đôi cao, bằng nửa hình vuông) được đặt ở giữa ảnh, nên khi Android Auto thu nhỏ " +
-                            "và cắt phần giữa, thông tin chính vẫn còn.",
+                        "Chọn dải ngang chứa thông tin chính (rộng gấp đôi cao). Ảnh gửi lên xe là hình vuông lấy quanh dải này, " +
+                            "dải nằm đúng nửa giữa. Khi Android Auto thu nhỏ còn nửa ảnh (cắt giữa) thì dải vẫn đầy đủ, " +
+                            "và ảnh không bị ghép chồng.",
                         fontSize = 12.sp, color = Dim
                     )
                     CropSlider("Trái", capRx, 0, 100) { capRx = it; putInt("cap_rx", it) }
                     CropSlider("Trên", capRy, 0, 100) { capRy = it; putInt("cap_ry", it) }
                     CropSlider("Rộng", capRw, 20, 100) { capRw = it; putInt("cap_rw", it) }
-                    CropSlider("Vị trí dải", capBc, 35, 65) { capBc = it; putInt("cap_bc", it) }
+                } else {
+                    Text("Ảnh vuông (không dùng dải ngang):", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    CropSlider("Trái", capX, 0, 100) { capX = it; putInt("cap_x", it) }
+                    CropSlider("Trên", capY, 0, 100) { capY = it; putInt("cap_y", it) }
+                    CropSlider("Cỡ", capS, 20, 100) { capS = it; putInt("cap_size", it) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GradBtn("Thử chụp") { ScreenCapture.start(ctx, capPkg, true) }
@@ -757,19 +762,22 @@ fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: I
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.fillMaxWidth(0.55f).aspectRatio(bmp.width.toFloat() / bmp.height)) {
                 Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
-                Canvas(Modifier.fillMaxSize()) {
+                Canvas(Modifier.fillMaxSize().clipToBounds()) {
                     val w = size.width
                     val h = size.height
-                    val cw = w * sp / 100f
-                    val x0 = (w * xp / 100f).coerceIn(0f, (w - cw).coerceAtLeast(0f))
-                    val y0 = (h * yp / 100f).coerceIn(0f, (h - cw).coerceAtLeast(0f))
-                    drawRect(AccentA, Offset(x0, y0), Size(cw, cw), style = Stroke(width = 3.dp.toPx()))
                     if (band) {
                         val bw = w * rw / 100f
                         val bh = bw / 2f
                         val bx = (w * rx / 100f).coerceIn(0f, (w - bw).coerceAtLeast(0f))
                         val by = (h * ry / 100f).coerceIn(0f, (h - bh).coerceAtLeast(0f))
+                        val sy = by + bh / 2f - bw / 2f   // hình vuông gửi lên xe, dải nằm đúng giữa
+                        drawRect(AccentA, Offset(bx, sy), Size(bw, bw), style = Stroke(width = 3.dp.toPx()))
                         drawRect(AccentB, Offset(bx, by), Size(bw, bh), style = Stroke(width = 3.dp.toPx()))
+                    } else {
+                        val cw = w * sp / 100f
+                        val x0 = (w * xp / 100f).coerceIn(0f, (w - cw).coerceAtLeast(0f))
+                        val y0 = (h * yp / 100f).coerceIn(0f, (h - cw).coerceAtLeast(0f))
+                        drawRect(AccentA, Offset(x0, y0), Size(cw, cw), style = Stroke(width = 3.dp.toPx()))
                     }
                 }
             }
