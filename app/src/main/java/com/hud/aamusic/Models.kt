@@ -16,7 +16,7 @@ data class Song(
     val path: String = ""
 )
 
-data class LrcLine(val timeMs: Long, val text: String)
+data class LrcLine(val timeMs: Long, val text: String, val extras: List<String> = emptyList())
 
 data class EqInfo(val min: Int, val max: Int, val freqsHz: List<Int>, val presets: List<String>)
 
@@ -89,7 +89,17 @@ object Lrc {
                 out += LrcLine(min * 60000L + sec * 1000L + frac, content)
             }
         }
-        return out.sortedBy { it.timeMs }
+        // Các dòng cùng mốc thời gian (gốc, phiên âm, dịch) gộp thành một dòng có dòng phụ
+        val merged = ArrayList<LrcLine>()
+        for (l in out.sortedBy { it.timeMs }) {
+            val last = merged.lastOrNull()
+            if (last != null && last.timeMs == l.timeMs && last.text.isNotBlank() && l.text.isNotBlank()) {
+                merged[merged.size - 1] = last.copy(extras = last.extras + l.text)
+            } else {
+                merged += l
+            }
+        }
+        return merged
     }
 
     /** 0 = rỗng, 1 = lời thường, 2 = có mốc thời gian. */

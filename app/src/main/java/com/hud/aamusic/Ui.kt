@@ -87,6 +87,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -858,14 +859,28 @@ fun LyricsView() {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = state, horizontalAlignment = Alignment.CenterHorizontally) {
             itemsIndexed(lines) { i, l ->
                 val cur = i == idx
-                Text(
-                    l.text.ifEmpty { "♪" }, textAlign = TextAlign.Center,
-                    fontSize = if (cur) 24.sp else 18.sp,
-                    fontWeight = if (cur) FontWeight.Bold else FontWeight.Normal,
-                    color = if (cur) AccentA else Color(0xFFB0B6C0),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                        .clickable { Engine.player.seekTo((l.timeMs - off).coerceAtLeast(0L)) }
-                )
+                Column(
+                    Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                        .clickable { Engine.player.seekTo((l.timeMs - off).coerceAtLeast(0L)) },
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        l.text.ifEmpty { "♪" }, textAlign = TextAlign.Center,
+                        fontSize = if (cur) 24.sp else 18.sp,
+                        fontWeight = if (cur) FontWeight.Bold else FontWeight.Normal,
+                        color = if (cur) AccentA else Color(0xFFB0B6C0)
+                    )
+                    // Dòng phụ: phiên âm (nghiêng) và bản dịch tiếng Việt
+                    for (x in l.extras) {
+                        val vn = isVietnameseText(x)
+                        Text(
+                            x, textAlign = TextAlign.Center,
+                            fontSize = if (cur) 15.sp else 13.sp,
+                            fontStyle = if (vn) FontStyle.Normal else FontStyle.Italic,
+                            color = if (vn) (if (cur) Color.White else Color(0xFF8B93A1)) else (if (cur) Color(0xFFFFB074) else Color(0xFF7A808C))
+                        )
+                    }
+                }
             }
         }
         LyricOffsetBar()
@@ -895,3 +910,7 @@ fun LyricOffsetBar() {
         SoftBtn("+0,5") { Engine.adjustLyricOffset(500) }
     }
 }
+
+/** Dòng tiếng Việt có ít nhất một chữ cái chỉ có trong tiếng Việt (để phân biệt với phiên âm pinyin). */
+fun isVietnameseText(s: String): Boolean =
+    s.any { it in "ăâđêôơưĂÂĐÊÔƠƯạảãấầẩẫậắằẳẵặẹẻẽếềểễệỉĩịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ" }

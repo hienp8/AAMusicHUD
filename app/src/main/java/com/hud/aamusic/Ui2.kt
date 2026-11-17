@@ -220,6 +220,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var lockLyrics by remember { mutableStateOf(prefs.getBoolean("lock_lyrics", true)) }
     var notifExtra by remember { mutableStateOf(prefs.getString("notif_extra", "shuffle") ?: "shuffle") }
+    var zhPinyin by remember { mutableStateOf(prefs.getBoolean("zh_pinyin", true)) }
+    var zhVi by remember { mutableStateOf(prefs.getBoolean("zh_vi", true)) }
+    var webSrc by remember { mutableStateOf(prefs.getBoolean("web_src", true)) }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
     var canWrite by remember { mutableStateOf(Tags.canWrite()) }
     var capEnabled by remember { mutableStateOf(prefs.getBoolean("cap_enabled", false)) }
@@ -282,6 +285,23 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text(
                     "Hiện app trên xe: Android Auto > chạm 10 lần vào Phiên bản > menu ⋮ > Cài đặt dành cho nhà phát triển > " +
                         "bật \"Nguồn không xác định\".",
+                    fontSize = 12.sp, color = Dim
+                )
+            }
+
+            CSection("Lời bài hát") {
+                CheckRow("Tìm thêm trên Kugeci và Lyricsify khi LRCLIB không có lời đồng bộ", webSrc) {
+                    webSrc = it; prefs.edit().putBoolean("web_src", it).apply()
+                }
+                CheckRow("Bài tiếng Trung: tự thêm phiên âm (pinyin)", zhPinyin) {
+                    zhPinyin = it; prefs.edit().putBoolean("zh_pinyin", it).apply()
+                }
+                CheckRow("Bài tiếng Trung: tự thêm bản dịch tiếng Việt", zhVi) {
+                    zhVi = it; prefs.edit().putBoolean("zh_vi", it).apply()
+                }
+                Text(
+                    "Bản dịch chạy trên máy; lần đầu cần mạng để tải mô hình dịch (khoảng vài chục MB). " +
+                        "Phiên âm và bản dịch được ghi vào tag lời cùng mốc thời gian với dòng gốc.",
                     fontSize = 12.sp, color = Dim
                 )
             }
@@ -656,22 +676,37 @@ fun TagEditor(s: Song) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         GradBtn("🎤 Tải lời tự động") {
                             scope.launch {
-                                status = "Đang tải lời..."
+                                status = "Đang tìm lời (LRCLIB, Kugeci, Lyricsify). Bài tiếng Trung sẽ được thêm phiên âm và dịch Việt, lần đầu có thể lâu do tải mô hình dịch..."
                                 val r = withContext(Dispatchers.IO) {
-                                    Net.lyrics(title.ifBlank { query }, artist, album, s.durationMs / 1000)
+                                    Net.lyricsAll(title.ifBlank { query }, artist, album, s.durationMs / 1000)
+                                        ?.let { Chinese.maybeAnnotate(it) }
                                 }
                                 if (r == null) {
-                                    status = "Không tìm thấy lời. Dùng nút tìm lời trên web rồi dán vào ô bên dưới."
+                                    status = "Không tìm thấy lời. " + LyricsWeb.lastNotes() + ". Dùng nút tìm lời trên web rồi dán vào ô bên dưới."
                                 } else {
                                     lyricsText = r.text
                                     lyricsDirty = true
-                                    status = if (r.synced) "Đã tải lời đồng bộ. Bấm Lưu vào file để ghi." else "Chỉ có lời thường (không chạy theo nhạc). Bấm Lưu để ghi."
+                                    status = (if (r.synced) "Đã tải lời đồng bộ" else "Chỉ có lời thường (không chạy theo nhạc)") +
+                                        " từ ${r.source}. Bấm Lưu vào file để ghi."
                                 }
                             }
                         }
                         SoftBtn("🌐 Tìm lời trên web") { openWeb("${title.ifBlank { query }} $artist lời bài hát", false) }
                         SoftBtn("📋 Dán lời") {
                             clipText().takeIf { it.isNotBlank() }?.let { lyricsText = it; lyricsDirty = true }
+                        }
+                        SoftBtn("🈶 Thêm phiên âm + dịch Việt") {
+                            scope.launch {
+                                status = "Đang xử lý (lần đầu cần tải mô hình dịch)..."
+                                val res = withContext(Dispatchers.IO) { Chinese.annotate(lyricsText, true, true) }
+                                if (res == null) {
+                                    status = "Không có gì để thêm (không phải lời tiếng Trung, đã có phiên âm/dịch, hoặc dịch lỗi)."
+                                } else {
+                                    lyricsText = res
+                                    lyricsDirty = true
+                                    status = "Đã thêm phiên âm và bản dịch. Bấm Lưu vào file để ghi."
+                                }
+                            }
                         }
                     }
                     OutlinedTextField(

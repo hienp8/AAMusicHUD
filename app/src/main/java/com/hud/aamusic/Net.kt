@@ -10,7 +10,7 @@ import java.text.Normalizer
 /** Tìm thông tin bài hát (iTunes Search API) và lời bài hát (LRCLIB). Không cần API key. */
 object Net {
     data class Track(val title: String, val artist: String, val album: String, val artUrl: String?)
-    data class Lyr(val text: String, val synced: Boolean)
+    data class Lyr(val text: String, val synced: Boolean, val source: String = "LRCLIB")
 
     private const val UA = "AAMusicHud/2.0 (https://github.com/hienp8/AAMusicHUD)"
 
@@ -89,6 +89,14 @@ object Net {
             return qw.count { it in tw }
         }
         return out.sortedByDescending { score(it) }.take(12)
+    }
+
+    /** LRCLIB trước; nếu không có lời đồng bộ thì thử thêm Kugeci và Lyricsify (nếu bật trong Cài đặt). */
+    fun lyricsAll(title: String, artist: String, album: String, durationSec: Long): Lyr? {
+        val r = lyrics(title, artist, album, durationSec)
+        if (r != null && r.synced) return r
+        if (!Engine.prefs.getBoolean("web_src", true)) return r
+        return LyricsWeb.fetch(title, artist) ?: r
     }
 
     private fun toLyr(o: JSONObject): Lyr? {

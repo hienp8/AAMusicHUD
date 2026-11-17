@@ -217,7 +217,7 @@ object LibraryCheck {
             val t = newTitle ?: baseTitle
             val a = newArtist ?: baseArtist
             if (t.isNotBlank()) {
-                val r = Net.lyrics(t, a, newAlbum ?: st.album, song.durationMs / 1000)
+                val r = Net.lyricsAll(t, a, newAlbum ?: st.album, song.durationMs / 1000)?.let { Chinese.maybeAnnotate(it) }
                 if (r != null && (r.synced || st.lyricKind == 0)) lyr = r
             }
         }
