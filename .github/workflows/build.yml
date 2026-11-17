@@ -21,7 +21,14 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build release APK
-        run: gradle assembleRelease --no-daemon --console=plain
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            if gradle assembleRelease --no-daemon --console=plain; then exit 0; fi
+            echo "Build loi, thu lai sau 40 giay (lan $i)"
+            sleep 40
+          done
+          exit 1
 
       - name: Rename APK
         run: |
