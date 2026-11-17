@@ -58,7 +58,7 @@ dependencies {
     // Đọc / ghi tag ID3, FLAC, M4A (bản dành cho Android)
     implementation("com.github.AdrienPoupa:jaudiotagger:2.2.3")
     // Phiên âm pinyin cho lời tiếng Trung
-    implementation("net.sourceforge.pinyin4j:pinyin4j:2.5.1")
+    implementation("com.belerweb:pinyin4j:2.5.1")
     // Dịch trên máy (Trung -> Việt), mô hình tải về lần đầu
     implementation("com.google.mlkit:translate:17.0.3")
 }
