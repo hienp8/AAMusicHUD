@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.media.audiofx.BassBoost
@@ -108,6 +110,7 @@ object Engine {
 
     // ---- Lời: chỉnh lệch thời gian theo từng bài (dương = lời hiện sớm hơn) ----
     var lyricOffsetMs by mutableIntStateOf(0)
+    var lyricSaveMsg by mutableStateOf("")
     private val offsets = HashMap<String, Int>()
 
     private val listener = object : Player.Listener {
@@ -118,6 +121,9 @@ object Engine {
         }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { refreshCurrent(); savePos() }
         override fun onTimelineChanged(timeline: Timeline, reason: Int) { queueVersion++; scheduleQueueSave() }
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (playWhenReady) requestFocus() else if (!resumeOnGain) abandonFocus()
+        }
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (player.duration > 0) durationMs = player.duration
             if (playbackState == Player.STATE_READY) {
@@ -138,7 +144,7 @@ object Engine {
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .build(),
-                true
+                false   // tự xử lý tiêu điểm âm thanh (xem requestFocus) để DiOTO/Wyn không làm dừng nhạc
             )
             setHandleAudioBecomingNoisy(true)
             addListener(listener)
@@ -401,6 +407,7 @@ object Engine {
         if (s?.id != current?.id) {
             current = s
             lyricOffsetMs = s?.let { offsets[Lists.key(it)] } ?: 0
+            lyricSaveMsg = ""
             loadLyrics(s)
         }
     }
@@ -495,6 +502,42 @@ object Engine {
     }
 
     fun resetLyricOffset() { adjustLyricOffset(-lyricOffsetMs) }
+
+    /** Ghi độ lệch hiện tại vào file: cộng / trừ thời gian của mọi dòng lời, rồi đặt độ lệch về 0. */
+    fun bakeLyricOffset() {
+        val s = current ?: return
+        val off = lyricOffsetMs
+        if (off == 0) return
+        if (s.streaming || s.path.isEmpty()) { lyricSaveMsg = "Không lưu được cho radio"; return }
+        if (!Tags.canWrite()) { lyricSaveMsg = "Cần cấp quyền Quản lý tất cả tệp (Cài đặt) để ghi vào file"; return }
+        lyricSaveMsg = "Đang lưu..."
+        thread {
+            var text = Tags.read(s.path)?.lyrics ?: ""
+            if (text.isBlank()) {
+                val f = lyricsFile(s)
+                if (f.exists()) try { text = f.readText() } catch (e: Exception) { }
+            }
+            if (text.isBlank() || Lrc.parse(text).isEmpty()) {
+                main.post { lyricSaveMsg = "Chưa có lời đồng bộ để lưu" }
+                return@thread
+            }
+            // Độ lệch dương = lời hiện sớm hơn => các mốc thời gian giảm đi, và ngược lại
+            val shifted = Lrc.shift(text, -off.toLong())
+            val err = applyTags(s, null, null, null, shifted, null)
+            main.post {
+                if (err == null) {
+                    lyricOffsetMs = 0
+                    offsets.remove(Lists.key(s))
+                    val o = JSONObject()
+                    for ((k, x) in offsets) o.put(k, x)
+                    prefs.edit().putString("lyric_offsets", o.toString()).apply()
+                    lyricSaveMsg = "Đã lưu vào file (thời gian các dòng đã được điều chỉnh)"
+                } else {
+                    lyricSaveMsg = "Chưa ghi được vào file: $err"
+                }
+            }
+        }
+    }
 
     // ---------------- Xoá bài ----------------
 
@@ -721,10 +764,80 @@ object Engine {
         }
     }
 
-    /** Không có DynamicsProcessing: chỉ giảm được tiền khuếch đại bằng âm lượng player. */
-    private fun applyPreampFallback() {
-        if (dp != null) return
-        player.volume = if (preamp < 0) Math.pow(10.0, preamp / 2000.0).toFloat().coerceIn(0.05f, 1f) else 1f
+    private var ducked = false
+    private var resumeOnGain = false
+    private var focusReq: AudioFocusRequest? = null
+
+    /** Âm lượng player = (giảm tiền khuếch đại nếu không có DynamicsProcessing) x (hạ khi app khác cần nói). */
+    private fun applyVolume() {
+        val base = if (dp == null && preamp < 0) Math.pow(10.0, preamp / 2000.0).toFloat().coerceIn(0.05f, 1f) else 1f
+        player.volume = base * (if (ducked) 0.25f else 1f)
+    }
+
+    private fun applyPreampFallback() { applyVolume() }
+
+    // ---------------- Tiêu điểm âm thanh ----------------
+    // Hạ nhỏ khi có thông báo ngắn (Google Maps...), dừng khi có cuộc gọi. Khi đang chụp DiOTO / Wyn thì
+    // bỏ qua việc các app đó chiếm tiêu điểm lâu dài, để nhạc không bị dừng và không phát được trên Android Auto.
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                ducked = false
+                applyVolume()
+                if (resumeOnGain) {
+                    resumeOnGain = false
+                    player.play()
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                ducked = true
+                applyVolume()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (player.isPlaying) {
+                    resumeOnGain = true
+                    player.pause()
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                if (ScreenCapture.running) {
+                    Diag.audio = "Âm thanh: app khác (DiOTO/Wyn...) chiếm tiêu điểm lâu dài, nhạc vẫn tiếp tục phát"
+                } else {
+                    resumeOnGain = false
+                    player.pause()
+                }
+            }
+        }
+    }
+
+    private fun requestFocus() {
+        if (focusReq != null) return
+        try {
+            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setOnAudioFocusChangeListener(focusListener)
+                .setWillPauseWhenDucked(false)
+                .build()
+            focusReq = req
+            app.getSystemService(AudioManager::class.java).requestAudioFocus(req)
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun abandonFocus() {
+        try {
+            focusReq?.let { app.getSystemService(AudioManager::class.java).abandonAudioFocusRequest(it) }
+        } catch (e: Exception) {
+        }
+        focusReq = null
+        ducked = false
+        resumeOnGain = false
+        applyVolume()
     }
 
     private fun applyDp() {
@@ -858,6 +971,7 @@ object Engine {
         savePos()
         try { player.stop() } catch (e: Exception) { }
         ScreenCapture.stop()
+        abandonFocus()
         releaseEffects()
         try { app.stopService(Intent(app, MusicService::class.java)) } catch (e: Exception) { }
         activity.finishAndRemoveTask()

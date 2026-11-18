@@ -70,6 +70,7 @@ object Diag {
     var service by mutableStateOf("Dịch vụ: chưa chạy")
     var aa by mutableStateOf("Android Auto: chưa kiểm tra")
     var cap by mutableStateOf("Chụp màn hình: chưa bật")
+    var audio by mutableStateOf("")
 }
 
 object Lrc {
@@ -100,6 +101,18 @@ object Lrc {
             }
         }
         return merged
+    }
+
+    /** Cộng (hoặc trừ nếu âm) deltaMs vào mọi mốc thời gian [mm:ss.xx] trong lời. */
+    fun shift(text: String, deltaMs: Long): String {
+        return tag.replace(text) { m ->
+            val min = m.groupValues[1].toLong()
+            val sec = m.groupValues[2].toLong()
+            val fr = m.groupValues[3]
+            val frac = if (fr.isEmpty()) 0L else fr.padEnd(3, '0').take(3).toLong()
+            val t = (min * 60000L + sec * 1000L + frac + deltaMs).coerceAtLeast(0L)
+            "[%02d:%02d.%02d]".format(t / 60000L, (t / 1000L) % 60L, (t % 1000L) / 10L)
+        }
     }
 
     /** 0 = rỗng, 1 = lời thường, 2 = có mốc thời gian. */

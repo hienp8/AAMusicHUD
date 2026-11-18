@@ -3,7 +3,10 @@ package com.hud.aamusic
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.provider.DocumentsContract
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.layout.ContentScale
@@ -222,7 +225,6 @@ fun SettingsScreen(onBack: () -> Unit) {
     var lockLyrics by remember { mutableStateOf(prefs.getBoolean("lock_lyrics", true)) }
     var notifExtra by remember { mutableStateOf(prefs.getString("notif_extra", "shuffle") ?: "shuffle") }
     var zhPinyin by remember { mutableStateOf(prefs.getBoolean("zh_pinyin", true)) }
-    var zhVi by remember { mutableStateOf(prefs.getBoolean("zh_vi", true)) }
     var webSrc by remember { mutableStateOf(prefs.getBoolean("web_src", true)) }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
     var canWrite by remember { mutableStateOf(Tags.canWrite()) }
@@ -281,6 +283,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 CheckRow("Hiện lời đồng bộ thay tên nghệ sĩ (Android Auto, thông báo, màn hình khoá)", lockLyrics) {
                     lockLyrics = it; prefs.edit().putBoolean("lock_lyrics", it).apply()
                 }
+                if (Diag.audio.isNotEmpty()) Text(Diag.audio, fontSize = 12.sp, color = AccentA)
                 Text("Nút phụ trên thông báo (ngoài ❤ ⏮ ⏯ ⏭, Android chỉ cho tối đa 5 nút):", fontSize = 12.sp, color = Dim)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Pill("🔀 Ngẫu nhiên", notifExtra == "shuffle") { notifExtra = "shuffle"; prefs.edit().putString("notif_extra", "shuffle").apply() }
@@ -300,12 +303,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 CheckRow("Bài tiếng Trung: tự thêm phiên âm (pinyin)", zhPinyin) {
                     zhPinyin = it; prefs.edit().putBoolean("zh_pinyin", it).apply()
                 }
-                CheckRow("Bài tiếng Trung: tự thêm bản dịch tiếng Việt", zhVi) {
-                    zhVi = it; prefs.edit().putBoolean("zh_vi", it).apply()
-                }
                 Text(
-                    "Bản dịch chạy trên máy; lần đầu cần mạng để tải mô hình dịch (khoảng vài chục MB). " +
-                        "Phiên âm và bản dịch được ghi vào tag lời cùng mốc thời gian với dòng gốc.",
+                    "Phiên âm được ghi vào tag lời cùng mốc thời gian với dòng gốc.",
                     fontSize = 12.sp, color = Dim
                 )
             }
@@ -532,6 +531,7 @@ fun TagEditor(s: Song) {
     var picked by remember(s.id) { mutableStateOf<ByteArray?>(null) }
     var status by remember(s.id) { mutableStateOf("") }
     var hasCover by remember(s.id) { mutableStateOf(false) }
+    var useNewCover by remember(s.id) { mutableStateOf(true) }
     var query by remember(s.id) {
         mutableStateOf(
             if (s.path.isNotEmpty()) LibraryCheck.guess(s.path).let { "${it.second} ${it.first}".trim() } else Engine.title(s)
@@ -555,7 +555,7 @@ fun TagEditor(s: Song) {
             val b = withContext(Dispatchers.IO) {
                 try { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } } catch (e: Exception) { null }
             }
-            if (b != null) { picked = b; artUrl = null; artLink = ""; status = "Đã chọn ảnh bìa. Bấm Lưu để ghi vào file." }
+            if (b != null) { picked = b; artUrl = null; artLink = ""; useNewCover = true; status = "Đã chọn ảnh bìa. Bấm Lưu để ghi vào file." }
             else status = "Không đọc được ảnh"
         }
     }
@@ -587,8 +587,8 @@ fun TagEditor(s: Song) {
                             status = "Đang lưu..."
                             val link = artLink.trim()
                             val src = if (link.isNotEmpty()) link else artUrl
-                            var cover: ByteArray? = picked
-                            if (cover == null && src != null) {
+                            var cover: ByteArray? = if (useNewCover) picked else null
+                            if (useNewCover && cover == null && src != null) {
                                 cover = withContext(Dispatchers.IO) { Net.bytes(src) }
                                 if (cover == null) status = "Không tải được ảnh từ link, các phần khác vẫn được lưu."
                             }
@@ -650,14 +650,37 @@ fun TagEditor(s: Song) {
                         SoftBtn("🌐 Tìm ảnh bìa") { openWeb(query.trim() + " album cover", true) }
                     }
                     results.take(12).forEach { t ->
-                        Text(
-                            "${t.title} — ${t.artist}\n${t.album}", fontSize = 13.sp,
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Card2)
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Card2)
                                 .clickable {
-                                    title = t.title; artist = t.artist; album = t.album; artUrl = t.artUrl; picked = null
-                                    status = "Đã chọn. Bấm Lưu vào file để ghi (kèm ảnh bìa)."
-                                }.padding(12.dp)
-                        )
+                                    title = t.title; artist = t.artist; album = t.album
+                                    artUrl = t.artUrl; picked = null; artLink = ""; useNewCover = t.artUrl != null
+                                    status = "Đã chọn. Xem ảnh bìa bên dưới, chọn dùng hay không rồi bấm Lưu vào file."
+                                }.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RemoteImage(t.thumbUrl, Modifier.size(60.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text("${t.title} — ${t.artist}\n${t.album}", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        }
+                    }
+
+                    val candidateUrl = artLink.trim().ifEmpty { artUrl }
+                    if (picked != null || candidateUrl != null) {
+                        Text("So sánh ảnh bìa", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Hiện tại", fontSize = 11.sp, color = Dim)
+                                Art(s, Modifier.fillMaxWidth().aspectRatio(1f), 256, 12.dp)
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text("Ảnh mới", fontSize = 11.sp, color = Dim)
+                                val pk = picked
+                                if (pk != null) PickedImage(pk, Modifier.fillMaxWidth().aspectRatio(1f))
+                                else RemoteImage(candidateUrl, Modifier.fillMaxWidth().aspectRatio(1f))
+                            }
+                        }
+                        CheckRow("Dùng ảnh bìa mới (bỏ chọn để giữ ảnh hiện tại)", useNewCover) { useNewCover = it }
                     }
 
                     Text(
@@ -669,7 +692,7 @@ fun TagEditor(s: Song) {
                             artLink, { artLink = it; picked = null }, label = { Text("Link ảnh bìa (dán từ trình duyệt)") },
                             singleLine = true, modifier = Modifier.weight(1f)
                         )
-                        SoftBtn("📋") { clipText().takeIf { it.isNotBlank() }?.let { artLink = firstLine(it); picked = null } }
+                        SoftBtn("📋") { clipText().takeIf { it.isNotBlank() }?.let { artLink = firstLine(it); picked = null; useNewCover = true } }
                     }
                     SoftBtn("🖼 Chọn ảnh bìa từ máy") { pick.launch("image/*") }
 
@@ -681,7 +704,7 @@ fun TagEditor(s: Song) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         GradBtn("🎤 Tải lời tự động") {
                             scope.launch {
-                                status = "Đang tìm lời (LRCLIB, Kugeci, Lyricsify). Bài tiếng Trung sẽ được thêm phiên âm và dịch Việt, lần đầu có thể lâu do tải mô hình dịch..."
+                                status = "Đang tìm lời (LRCLIB, Kugeci, Lyricsify). Bài tiếng Trung sẽ được thêm phiên âm..."
                                 val r = withContext(Dispatchers.IO) {
                                     Net.lyricsAll(title.ifBlank { query }, artist, album, s.durationMs / 1000)
                                         ?.let { Chinese.maybeAnnotate(it) }
@@ -700,16 +723,16 @@ fun TagEditor(s: Song) {
                         SoftBtn("📋 Dán lời") {
                             clipText().takeIf { it.isNotBlank() }?.let { lyricsText = it; lyricsDirty = true }
                         }
-                        SoftBtn("🈶 Thêm phiên âm + dịch Việt") {
+                        SoftBtn("🈶 Thêm phiên âm (pinyin)") {
                             scope.launch {
-                                status = "Đang xử lý (lần đầu cần tải mô hình dịch)..."
-                                val res = withContext(Dispatchers.IO) { Chinese.annotate(lyricsText, true, true) }
+                                status = "Đang thêm phiên âm..."
+                                val res = withContext(Dispatchers.IO) { Chinese.annotate(lyricsText, true) }
                                 if (res == null) {
-                                    status = "Không có gì để thêm (không phải lời tiếng Trung, đã có phiên âm/dịch, hoặc dịch lỗi)."
+                                    status = "Không có gì để thêm (không phải lời tiếng Trung hoặc đã có phiên âm)."
                                 } else {
                                     lyricsText = res
                                     lyricsDirty = true
-                                    status = "Đã thêm phiên âm và bản dịch. Bấm Lưu vào file để ghi."
+                                    status = "Đã thêm phiên âm. Bấm Lưu vào file để ghi."
                                 }
                             }
                         }
@@ -1006,6 +1029,41 @@ fun QueueScreen(onBack: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+
+// ------------------------------------------------------------------ Ảnh từ internet / từ máy (xem trước)
+
+@Composable
+fun RemoteImage(url: String?, modifier: Modifier = Modifier) {
+    val bmp by produceState<Bitmap?>(null, url) {
+        value = if (url == null) null else withContext(Dispatchers.IO) { Net.thumb(url) }
+    }
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(Card2), contentAlignment = Alignment.Center) {
+        val b = bmp
+        if (b != null) {
+            Image(bitmap = b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else {
+            Text(if (url == null) "—" else "…", color = Dim)
+        }
+    }
+}
+
+@Composable
+fun PickedImage(bytes: ByteArray, modifier: Modifier = Modifier) {
+    val bmp = remember(bytes) {
+        try {
+            val o = BitmapFactory.Options().apply { inSampleSize = 4 }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        } catch (e: Throwable) {
+            null
+        }
+    }
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(Card2), contentAlignment = Alignment.Center) {
+        if (bmp != null) {
+            Image(bitmap = bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
     }
 }

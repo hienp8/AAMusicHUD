@@ -1,5 +1,8 @@
 package com.hud.aamusic
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.LruCache
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -9,7 +12,7 @@ import java.text.Normalizer
 
 /** Tìm thông tin bài hát (iTunes Search API) và lời bài hát (LRCLIB). Không cần API key. */
 object Net {
-    data class Track(val title: String, val artist: String, val album: String, val artUrl: String?)
+    data class Track(val title: String, val artist: String, val album: String, val artUrl: String?, val thumbUrl: String? = null)
     data class Lyr(val text: String, val synced: Boolean, val source: String = "LRCLIB")
 
     private const val UA = "AAMusicHud/2.0 (https://github.com/hienp8/AAMusicHUD)"
@@ -40,6 +43,17 @@ object Net {
 
     private fun JSONObject.str(k: String): String = if (isNull(k)) "" else optString(k, "")
 
+    private val thumbCache = LruCache<String, Bitmap>(60)
+
+    /** Tải ảnh từ URL (có nhớ tạm) để xem trước; gọi ngoài luồng chính. */
+    fun thumb(url: String): Bitmap? {
+        thumbCache.get(url)?.let { return it }
+        val b = bytes(url) ?: return null
+        val bmp = BitmapFactory.decodeByteArray(b, 0, b.size) ?: return null
+        thumbCache.put(url, bmp)
+        return bmp
+    }
+
     fun searchTracks(q: String): List<Track> {
         val t = text("https://itunes.apple.com/search?term=${enc(q)}&media=music&entity=song&limit=15")
             ?: return emptyList()
@@ -49,7 +63,7 @@ object Net {
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 val art = o.str("artworkUrl100").ifEmpty { null }?.replace("100x100bb", "600x600bb")
-                out += Track(o.str("trackName"), o.str("artistName"), o.str("collectionName"), art)
+                out += Track(o.str("trackName"), o.str("artistName"), o.str("collectionName"), art, o.str("artworkUrl100").ifEmpty { null })
             }
             out
         } catch (e: Exception) {

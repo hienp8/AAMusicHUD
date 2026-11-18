@@ -100,6 +100,7 @@ import androidx.palette.graphics.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.max
 
 // ------------------------------------------------------------------ Thiết kế chung
@@ -854,9 +855,17 @@ fun LyricsView() {
     val pos = Engine.positionMs + off
     val idx = lines.indexOfLast { it.timeMs <= pos + 250 }.coerceAtLeast(0)
     val state = rememberLazyListState()
-    LaunchedEffect(idx) { state.animateScrollToItem((idx - 3).coerceAtLeast(0)) }
+    // Đặt dòng đang hát ở khoảng 28% chiều cao khung (không phụ thuộc số dòng phụ như phiên âm)
+    LaunchedEffect(idx) {
+        val vh = state.layoutInfo.viewportSize.height
+        state.animateScrollToItem(idx, -(vh * 0.28f).toInt())
+    }
     Column(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = state, horizontalAlignment = Alignment.CenterHorizontally) {
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(), state = state,
+            contentPadding = PaddingValues(top = 8.dp, bottom = 240.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             itemsIndexed(lines) { i, l ->
                 val cur = i == idx
                 Column(
@@ -870,7 +879,7 @@ fun LyricsView() {
                         fontWeight = if (cur) FontWeight.Bold else FontWeight.Normal,
                         color = if (cur) AccentA else Color(0xFFB0B6C0)
                     )
-                    // Dòng phụ: phiên âm (nghiêng) và bản dịch tiếng Việt
+                    // Dòng phụ: phiên âm (nghiêng)
                     for (x in l.extras) {
                         val vn = isVietnameseText(x)
                         Text(
@@ -887,28 +896,51 @@ fun LyricsView() {
     }
 }
 
-/** Chỉnh lời sớm hơn (+) hoặc chậm hơn (−) cho khớp với bài; lưu riêng cho từng bài. */
+/** Chỉnh lời sớm hơn (+) hoặc chậm hơn (−) theo bước 0,5 / 1 / 2 giây; có thể lưu vào file. */
 @Composable
 fun LyricOffsetBar() {
     val off = Engine.lyricOffsetMs
     val label = when {
-        off == 0 -> "Khớp gốc\n(+ sớm, − chậm)"
-        off > 0 -> "Lời sớm hơn %.1fs\n(chạm để đặt lại)".format(off / 1000f)
-        else -> "Lời chậm hơn %.1fs\n(chạm để đặt lại)".format(-off / 1000f)
+        off == 0 -> "Khớp gốc"
+        off > 0 -> "Lời sớm hơn %.1f giây".format(off / 1000f)
+        else -> "Lời chậm hơn %.1f giây".format(-off / 1000f)
     }
-    Row(
-        Modifier.fillMaxWidth().padding(top = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically
+    Column(
+        Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(22.dp))
+            .background(Color(0x99151922)).border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(22.dp)).padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        SoftBtn("−0,5") { Engine.adjustLyricOffset(-500) }
-        SoftBtn("−0,1") { Engine.adjustLyricOffset(-100) }
-        Text(
-            label, fontSize = 11.sp, color = AccentA, textAlign = TextAlign.Center, lineHeight = 14.sp,
-            modifier = Modifier.weight(1f).clickable { Engine.resetLyricOffset() }
-        )
-        SoftBtn("+0,1") { Engine.adjustLyricOffset(100) }
-        SoftBtn("+0,5") { Engine.adjustLyricOffset(500) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                label, color = if (off == 0) Dim else AccentA, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                modifier = Modifier.pressable { Engine.resetLyricOffset() }
+            )
+            Text("   (+ sớm, − chậm)", color = Dim, fontSize = 11.sp)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            for (d in listOf(-2000, -1000, -500, 500, 1000, 2000)) OffsetChip(d)
+        }
+        if (off != 0) GradBtn("💾 Lưu vào file (tự cộng/trừ thời gian các dòng)") { Engine.bakeLyricOffset() }
+        if (Engine.lyricSaveMsg.isNotEmpty()) {
+            Text(Engine.lyricSaveMsg, color = AccentA, fontSize = 11.sp, textAlign = TextAlign.Center)
+        }
     }
+}
+
+@Composable
+fun OffsetChip(delta: Int) {
+    val neg = delta < 0
+    val sec = abs(delta) / 1000f
+    val txt = (if (neg) "−" else "+") + (if (abs(delta) % 1000 == 0) "${abs(delta) / 1000}" else "0,5") + "s"
+    val colors = if (neg) listOf(Color(0xFF3B4C9B), Color(0xFF28356A)) else listOf(Color(0xFFB0426A), Color(0xFF6E2A45))
+    Box(
+        Modifier.pressable { Engine.adjustLyricOffset(delta) }
+            .clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(colors))
+            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) { Text(txt, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White) }
 }
 
 /** Dòng tiếng Việt có ít nhất một chữ cái chỉ có trong tiếng Việt (để phân biệt với phiên âm pinyin). */
