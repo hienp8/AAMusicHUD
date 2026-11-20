@@ -5,17 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.input.pointer.pointerInput
-import kotlinx.coroutines.launch
-import java.text.Normalizer
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -25,25 +14,16 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.ui.composed
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -51,8 +31,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -60,6 +42,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -88,15 +72,30 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -109,7 +108,9 @@ import androidx.media3.common.Player
 import androidx.palette.graphics.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.Normalizer
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -463,6 +464,7 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
     val thumbAlpha by animateFloatAsState(if (active) 1f else 0.35f, label = "thumb")
 
     fun pick(y: Float, h: Int) {
+        if (h <= 0) return
         val idx = ((y / h) * ALPHABET.length).toInt().coerceIn(0, ALPHABET.length - 1)
         val ch = ALPHABET[idx]
         val target = letters.firstOrNull { it.first == ch } ?: letters.firstOrNull { it.first > ch } ?: letters.last()
@@ -474,15 +476,17 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
     Box(
         Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(28.dp)
             .pointerInput(total) {
+                val h = size.height
                 detectVerticalDragGestures(onDragEnd = { bubble = null }, onDragCancel = { bubble = null }) { change, _ ->
                     change.consume()
-                    val f = (change.position.y / size.height).coerceIn(0f, 1f)
+                    val f = if (h > 0) (change.position.y / h).coerceIn(0f, 1f) else 0f
                     scope.launch { state.scrollToItem((f * (total - 1)).toInt()) }
                 }
             }
             .pointerInput(total) {
+                val h = size.height
                 detectTapGestures { off ->
-                    val f = (off.y / size.height).coerceIn(0f, 1f)
+                    val f = if (h > 0) (off.y / h).coerceIn(0f, 1f) else 0f
                     scope.launch { state.scrollToItem((f * (total - 1)).toInt()) }
                 }
             }
@@ -505,11 +509,15 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
         Column(
             Modifier.align(Alignment.CenterEnd).padding(end = 28.dp).fillMaxHeight(0.82f).width(24.dp)
                 .clip(RoundedCornerShape(12.dp)).background(Color(0x66151922))
-                .pointerInput(letters) { detectTapGestures { off -> pick(off.y, size.height) } }
                 .pointerInput(letters) {
+                    val h = size.height
+                    detectTapGestures { off -> pick(off.y, h) }
+                }
+                .pointerInput(letters) {
+                    val h = size.height
                     detectVerticalDragGestures(onDragEnd = { bubble = null }, onDragCancel = { bubble = null }) { change, _ ->
                         change.consume()
-                        pick(change.position.y, size.height)
+                        pick(change.position.y, h)
                     }
                 },
             verticalArrangement = Arrangement.SpaceEvenly,
