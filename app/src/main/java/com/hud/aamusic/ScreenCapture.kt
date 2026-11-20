@@ -24,7 +24,7 @@ import androidx.compose.runtime.setValue
 import kotlin.concurrent.thread
 
 /**
- * Chạy app (DiOTO, Wyn...) trên một màn hình ảo, chụp hình mỗi ~1,5 giây, cắt hình vuông
+ * Chạy app (Wyn...) trên một màn hình ảo, chụp hình mỗi ~1,5 giây, cắt hình vuông
  * và dùng làm ảnh bìa trên Android Auto. Cần root (để mở app trên màn hình ảo).
  * Không đọc hay sao chép dữ liệu của app, chỉ chụp lại giao diện đang hiển thị.
  *
@@ -97,9 +97,10 @@ object ScreenCapture {
             return "không có quyền root (hãy cấp Superuser cho AA Music trong KernelSU)"
         }
         val m = ctx.resources.displayMetrics
-        val w = (m.widthPixels / 2).coerceAtLeast(360)
-        val h = (m.heightPixels / 2).coerceAtLeast(640)
-        val dpi = (m.densityDpi / 2).coerceAtLeast(120)
+        // Độ phân giải đầy đủ của máy để hình nét hơn khi gửi lên xe
+        val w = m.widthPixels.coerceAtLeast(360)
+        val h = m.heightPixels.coerceAtLeast(640)
+        val dpi = m.densityDpi.coerceAtLeast(120)
 
         val handlerThread = HandlerThread("aamusic-cap").also { it.start() }
         ht = handlerThread
@@ -204,22 +205,21 @@ object ScreenCapture {
             if (prefs.getBoolean("cap_band", true)) {
                 // Ảnh gửi lên xe là hình vuông lấy quanh dải ngang đã chọn (dải nằm đúng nửa giữa).
                 // Khi Android Auto cắt giữa còn nửa ảnh thì dải vẫn đầy đủ; không ghép chồng hình.
-                val rw = (w * prefs.getInt("cap_rw", 92) / 100f).toInt().coerceIn(32, w)
-                val rx = (w * prefs.getInt("cap_rx", 4) / 100f).toInt().coerceIn(0, w - rw)
+                val rw = (w * prefs.getInt("cap_rw", 70) / 100f).toInt().coerceIn(32, w)
+                val rx = (w * prefs.getInt("cap_rx", 26) / 100f).toInt().coerceIn(0, w - rw)
                 val rh = rw / 2
-                val ry = (h * prefs.getInt("cap_ry", 14) / 100f).toInt().coerceIn(0, (h - rh).coerceAtLeast(0))
+                val ry = (h * prefs.getInt("cap_ry", 23) / 100f).toInt().coerceIn(0, (h - rh).coerceAtLeast(0))
                 val side = rw
                 val top = ry + rh / 2 - side / 2
                 val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
                 val cv = Canvas(out)
-                cv.drawColor(0xFF0B0D12.toInt())
                 val sy0 = top.coerceAtLeast(0)
                 val sy1 = (top + side).coerceAtMost(h)
                 if (sy1 > sy0) {
                     val k = 512f / side
                     cv.drawBitmap(
                         full, Rect(rx, sy0, rx + side, sy1),
-                        RectF(0f, (sy0 - top) * k, 512f, (sy1 - top) * k), Paint(Paint.FILTER_BITMAP_FLAG)
+                        RectF(0f, (sy0 - top) * k, 512f, (sy1 - top) * k), Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
                     )
                 }
                 finalArt = out
@@ -237,7 +237,7 @@ object ScreenCapture {
             main.post {
                 preview = small
                 previewArt = finalArt
-                liveFrame = full
+                liveFrame = Bitmap.createScaledBitmap(full, 720, (720f * h / w).toInt().coerceAtLeast(1), true)
                 onFrame?.invoke(finalArt)
             }
         } catch (e: Throwable) {

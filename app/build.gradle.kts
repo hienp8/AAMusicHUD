@@ -57,6 +57,4 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     // Đọc / ghi tag ID3, FLAC, M4A (bản dành cho Android)
     implementation("com.github.AdrienPoupa:jaudiotagger:2.2.3")
-    // Phiên âm pinyin cho lời tiếng Trung
-    implementation("com.belerweb:pinyin4j:2.5.1")
 }

@@ -7,6 +7,8 @@ import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.images.ArtworkFactory
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -45,14 +47,33 @@ object Tags {
         }
     }
 
-    /** Thay file gốc bằng file đã ghi, có bản dự phòng; lỗi thì khôi phục. @return null nếu thành công. */
+    /**
+     * Ghi nội dung file tạm đè TẠI CHỖ lên file gốc (giữ nguyên file và bản ghi trong MediaStore, tránh app
+     * không mở được bài sau khi sửa tag). Có bản dự phòng; lỗi thì khôi phục. @return null nếu thành công.
+     */
     fun replaceFile(orig: File, tmp: File): String? {
         val bak = File(orig.parentFile, "." + orig.name + ".aabak")
-        if (bak.exists()) bak.delete()
-        if (!orig.renameTo(bak)) return "Không đổi tên được file gốc (cần quyền Quản lý tất cả tệp)"
-        if (!tmp.renameTo(orig)) {
-            bak.renameTo(orig)
-            return "Không thay thế được file, đã giữ nguyên file gốc"
+        try {
+            if (bak.exists()) bak.delete()
+            orig.copyTo(bak, overwrite = true)
+        } catch (e: Exception) {
+            return "Không tạo được bản dự phòng: ${e.message}"
+        }
+        try {
+            tmp.inputStream().use { input ->
+                FileOutputStream(orig, false).use { out ->
+                    input.copyTo(out)
+                    out.fd.sync()
+                }
+            }
+            if (orig.length() != tmp.length()) throw IOException("kích thước không khớp")
+        } catch (e: Exception) {
+            try {
+                bak.inputStream().use { i -> FileOutputStream(orig, false).use { o -> i.copyTo(o) } }
+            } catch (e2: Exception) {
+            }
+            bak.delete()
+            return "Ghi đè lỗi, đã khôi phục file gốc: ${e.message}"
         }
         bak.delete()
         return null
@@ -81,7 +102,10 @@ object Tags {
                 }
             }
             if (!done) err = writeWithJaudiotagger(f, title, artist, album, lyrics, cover)
-            if (err == null) MediaScannerConnection.scanFile(Engine.app, arrayOf(path), null, null)
+            if (err == null) {
+                MediaScannerConnection.scanFile(Engine.app, arrayOf(path), null) { _, _ -> Engine.loadSongsAsync() }
+                LibraryCheck.refreshPath(path)
+            }
             err
         } catch (e: Throwable) {
             e.message ?: e.javaClass.simpleName

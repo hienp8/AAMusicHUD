@@ -107,6 +107,29 @@ object LibraryCheck {
         }
     }
 
+    /** Đọc lại tag của một file vừa được sửa và cập nhật kết quả đã quét. */
+    fun refreshPath(path: String) {
+        thread {
+            val info = Tags.read(path) ?: return@thread
+            val m = try { File(path).lastModified() } catch (e: Exception) { 0L }
+            main.post {
+                val id = Engine.pathMap()[path]?.id ?: ""
+                val exists = states.any { it.path == path }
+                states = if (exists) {
+                    states.map {
+                        if (it.path != path) it else it.copy(
+                            title = info.title, artist = info.artist, album = info.album,
+                            hasCover = info.hasCover, lyricKind = Lrc.kind(info.lyrics), ok = true, mtime = m
+                        )
+                    }
+                } else {
+                    states + TagState(id, path, info.title, info.artist, info.album, info.hasCover, Lrc.kind(info.lyrics), true, m)
+                }
+                saveAsync()
+            }
+        }
+    }
+
     fun dismiss(p: Proposal) {
         proposals.remove(p)
         saveAsync()
@@ -217,7 +240,7 @@ object LibraryCheck {
             val t = newTitle ?: baseTitle
             val a = newArtist ?: baseArtist
             if (t.isNotBlank()) {
-                val r = Net.lyricsAll(t, a, newAlbum ?: st.album, song.durationMs / 1000)?.let { Chinese.maybeAnnotate(it) }
+                val r = Net.lyricsAll(t, a, newAlbum ?: st.album, song.durationMs / 1000)
                 if (r != null && (r.synced || st.lyricKind == 0)) lyr = r
             }
         }

@@ -4,6 +4,16 @@ import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
+import java.text.Normalizer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.animation.core.LinearEasing
@@ -321,10 +331,14 @@ fun PlayOrb(playing: Boolean, onClick: () -> Unit) {
     }
 }
 
+private val GlassBg = Color(0xB3151922)
+private val GlassBorder = Color(0x22FFFFFF)
+
 @Composable
 fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(CardC).padding(16.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(GlassBg)
+            .border(1.dp, GlassBorder, RoundedCornerShape(22.dp)).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -336,7 +350,10 @@ fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
 @Composable
 fun CSection(title: String, startOpen: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     var open by remember { mutableStateOf(startOpen) }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardC)) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(GlassBg)
+            .border(1.dp, GlassBorder, RoundedCornerShape(22.dp))
+    ) {
         Row(
             Modifier.fillMaxWidth().clickable { open = !open }.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -353,17 +370,160 @@ fun CSection(title: String, startOpen: Boolean = false, content: @Composable Col
     }
 }
 
-/** Thanh tiêu đề có nút quay lại về màn hình nghe nhạc. */
+@Composable
+fun IconBack(color: Color, dp: Dp) {
+    Canvas(Modifier.size(dp)) {
+        val w = size.width
+        val h = size.height
+        val p = Path().apply {
+            moveTo(w * 0.62f, h * 0.18f); lineTo(w * 0.34f, h * 0.50f); lineTo(w * 0.62f, h * 0.82f)
+        }
+        drawPath(p, color, style = Stroke(width = w * 0.12f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+@Composable
+fun IconPower(color: Color, dp: Dp) {
+    Canvas(Modifier.size(dp)) {
+        val w = size.width
+        val sw = w * 0.11f
+        drawArc(color, -60f, 300f, false, Offset(w * 0.18f, w * 0.22f), Size(w * 0.64f, w * 0.64f), style = Stroke(width = sw, cap = StrokeCap.Round))
+        drawLine(color, Offset(w * 0.5f, w * 0.08f), Offset(w * 0.5f, w * 0.5f), strokeWidth = sw, cap = StrokeCap.Round)
+    }
+}
+
+/** Thanh tiêu đề: nút quay lại lớn, biểu tượng vẽ tay căn giữa, cùng kiểu nút với màn hình nghe nhạc. */
 @Composable
 fun ScreenHeader(title: String, onBack: () -> Unit, trailing: @Composable RowScope.() -> Unit = {}) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 6.dp),
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        NeonButton(44.dp, false, { onBack() }) { Text("←", fontSize = 18.sp) }
-        Spacer(Modifier.width(12.dp))
-        Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        NeonButton(52.dp, false, { onBack() }) { IconBack(Color.White, 26.dp) }
+        Spacer(Modifier.width(14.dp))
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.weight(1f))
         trailing()
+    }
+}
+
+// ------------------------------------------------------------------ Cuộn nhanh + hàng chữ cái
+
+private const val ALPHABET = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+fun foldText(s: String): String =
+    Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+        .replace('đ', 'd').replace('Đ', 'D')
+
+fun sortKey(s: String): String = foldText(s.trim()).lowercase()
+
+fun letterOf(s: String): Char {
+    val c = foldText(s.trim()).firstOrNull()?.uppercaseChar() ?: '#'
+    return if (c in 'A'..'Z') c else '#'
+}
+
+/** Chữ cái đầu và chỉ số mục đầu tiên của chữ đó (danh sách phải đã sắp xếp theo ABC). */
+fun alphaIndex(keys: List<String>): List<Pair<Char, Int>> {
+    val out = ArrayList<Pair<Char, Int>>()
+    val seen = HashSet<Char>()
+    for ((i, k) in keys.withIndex()) {
+        val c = letterOf(k)
+        if (seen.add(c)) out += c to i
+    }
+    return out
+}
+
+/** Danh sách cuộn có thanh kéo nhanh và (nếu có) hàng chữ cái ở mép phải. */
+@Composable
+fun ScrollList(
+    letters: List<Pair<Char, Int>> = emptyList(),
+    bottom: Dp = 170.dp,
+    spacing: Dp = 0.dp,
+    content: LazyListScope.() -> Unit
+) {
+    val state = rememberLazyListState()
+    val showLetters = letters.size >= 3
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.fillMaxSize(), state = state,
+            contentPadding = PaddingValues(top = 4.dp, bottom = bottom, end = if (showLetters) 56.dp else 28.dp),
+            verticalArrangement = Arrangement.spacedBy(spacing),
+            content = content
+        )
+        FastScroller(state, letters)
+    }
+}
+
+@Composable
+private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char, Int>>) {
+    val scope = rememberCoroutineScope()
+    var bubble by remember { mutableStateOf<Char?>(null) }
+    val total = state.layoutInfo.totalItemsCount
+    if (total < 20) return
+    val active = state.isScrollInProgress || bubble != null
+    val thumbAlpha by animateFloatAsState(if (active) 1f else 0.35f, label = "thumb")
+
+    fun pick(y: Float, h: Int) {
+        val idx = ((y / h) * ALPHABET.length).toInt().coerceIn(0, ALPHABET.length - 1)
+        val ch = ALPHABET[idx]
+        val target = letters.firstOrNull { it.first == ch } ?: letters.firstOrNull { it.first > ch } ?: letters.last()
+        bubble = ch
+        scope.launch { state.scrollToItem(target.second) }
+    }
+
+    // Thanh trượt nhanh: kéo hoặc chạm để nhảy tới vị trí
+    Box(
+        Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(28.dp)
+            .pointerInput(total) {
+                detectVerticalDragGestures(onDragEnd = { bubble = null }, onDragCancel = { bubble = null }) { change, _ ->
+                    change.consume()
+                    val f = (change.position.y / size.height).coerceIn(0f, 1f)
+                    scope.launch { state.scrollToItem((f * (total - 1)).toInt()) }
+                }
+            }
+            .pointerInput(total) {
+                detectTapGestures { off ->
+                    val f = (off.y / size.height).coerceIn(0f, 1f)
+                    scope.launch { state.scrollToItem((f * (total - 1)).toInt()) }
+                }
+            }
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val vis = state.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
+            val frac = if (total - vis <= 0) 0f else (state.firstVisibleItemIndex.toFloat() / (total - vis)).coerceIn(0f, 1f)
+            val th = 56.dp.toPx()
+            val tw = 5.dp.toPx()
+            drawRoundRect(
+                AccentA.copy(alpha = thumbAlpha), Offset(size.width - tw - 6.dp.toPx(), frac * (size.height - th)),
+                Size(tw, th), CornerRadius(tw / 2f, tw / 2f)
+            )
+        }
+    }
+
+    // Hàng chữ cái
+    if (letters.size >= 3) {
+        val avail = letters.map { it.first }.toSet()
+        Column(
+            Modifier.align(Alignment.CenterEnd).padding(end = 28.dp).fillMaxHeight(0.82f).width(24.dp)
+                .clip(RoundedCornerShape(12.dp)).background(Color(0x66151922))
+                .pointerInput(letters) { detectTapGestures { off -> pick(off.y, size.height) } }
+                .pointerInput(letters) {
+                    detectVerticalDragGestures(onDragEnd = { bubble = null }, onDragCancel = { bubble = null }) { change, _ ->
+                        change.consume()
+                        pick(change.position.y, size.height)
+                    }
+                },
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            for (c in ALPHABET) Text(c.toString(), fontSize = 10.sp, color = if (c in avail) AccentA else Dim)
+        }
+    }
+
+    bubble?.let {
+        Box(
+            Modifier.align(Alignment.Center).size(76.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xCC000000)),
+            Alignment.Center
+        ) { Text(it.toString(), fontSize = 36.sp, fontWeight = FontWeight.Bold, color = AccentA) }
     }
 }
 
@@ -374,8 +534,19 @@ fun Root() {
     // 0 = Đang phát (mặc định), 1 = Thư viện, 2 = Âm thanh, 3 = Cài đặt, 4 = Hàng đợi
     var screen by remember { mutableIntStateOf(0) }
     BackHandler(enabled = screen != 0) { screen = 0 }
+    val cur = Engine.current
+    val artVer = Engine.artVersion
+    val tint by produceState(Card2, cur?.id, artVer) {
+        value = if (cur == null) Card2 else withContext(Dispatchers.IO) {
+            val b = Engine.loadArt(cur, 96)
+            if (b == null) Card2 else {
+                val dom = Palette.from(b).generate().getDominantColor(0xFF2A3140.toInt())
+                Color(ColorUtils.blendARGB(dom, android.graphics.Color.BLACK, 0.55f))
+            }
+        }
+    }
     Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(tint, Bg)))) {
             when (screen) {
                 0 -> NowPlayingScreen({ screen = 1 }, { screen = 2 }, { screen = 3 }, { screen = 4 })
                 1 -> LibraryScreen { screen = 0 }
@@ -460,6 +631,8 @@ fun LibraryScreen(onBack: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf<Pair<String, String>?>(null) }
     val all = Engine.songs
+    val ev = Engine.editsVersion
+    val sorted = remember(all, ev) { all.sortedBy { sortKey(Engine.title(it)) } }
     val q = query.trim().lowercase()
     fun match(s: Song) = q.isEmpty() || Engine.title(s).lowercase().contains(q) ||
         Engine.artist(s).lowercase().contains(q) || Engine.album(s).lowercase().contains(q)
@@ -469,14 +642,21 @@ fun LibraryScreen(onBack: () -> Unit) {
     BackHandler(enabled = filter != null) { filter = null }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Thư viện", onBack) { SoftBtn("🩺 Tag") { LibraryCheck.visible = true } }
+        ScreenHeader("Thư viện", onBack) {
+            SoftBtn("🔄") { Engine.refreshLibrary() }
+            Spacer(Modifier.width(8.dp))
+            SoftBtn("🩺 Tag") { LibraryCheck.visible = true }
+        }
+        if (Engine.libraryMsg.isNotEmpty()) {
+            Text(Engine.libraryMsg, color = AccentA, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
+        }
         OutlinedTextField(
             value = query, onValueChange = { query = it }, singleLine = true,
             placeholder = { Text("Tìm bài hát, nghệ sĩ, album...", color = Dim) },
             shape = RoundedCornerShape(26.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = AccentA, unfocusedBorderColor = Card2,
-                focusedContainerColor = CardC, unfocusedContainerColor = CardC
+                focusedContainerColor = Color(0x99151922), unfocusedContainerColor = Color(0x99151922)
             ),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         )
@@ -504,17 +684,17 @@ fun LibraryScreen(onBack: () -> Unit) {
                 Text("← $label", color = AccentA, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clickable { filter = null }.padding(16.dp))
                 SongList(
-                    all.filter {
+                    sorted.filter {
                         when (f.first) {
                             "album" -> Engine.album(it) == f.second
                             "artist" -> Engine.artist(it) == f.second
                             else -> java.io.File(it.path).parent == f.second
                         }
                     },
-                    true
+                    true, null, true
                 )
             }
-            sub == 0 -> SongList(all.filter { match(it) }, true)
+            sub == 0 -> SongList(sorted.filter { match(it) }, true, null, true)
             sub == 1 -> FolderTab(all, { filter = "folder" to it }) { pickFolder.launch(null) }
             sub == 2 -> {
                 val fav = Lists.favSongs().filter { match(it) }
@@ -522,8 +702,8 @@ fun LibraryScreen(onBack: () -> Unit) {
                 else SongList(fav, true)
             }
             sub == 3 -> PlaylistList { filter = "playlist" to it }
-            sub == 4 -> GroupList(all.filter { match(it) }.groupBy { Engine.album(it) }) { filter = "album" to it }
-            sub == 5 -> GroupList(all.filter { match(it) }.groupBy { Engine.artist(it) }) { filter = "artist" to it }
+            sub == 4 -> GroupList(sorted.filter { match(it) }.groupBy { Engine.album(it) }) { filter = "album" to it }
+            sub == 5 -> GroupList(sorted.filter { match(it) }.groupBy { Engine.artist(it) }) { filter = "artist" to it }
             else -> {
                 val radio = Engine.streams()
                 if (radio.isEmpty()) EmptyHint("Chưa có radio. Thêm ở Cài đặt (mỗi dòng: Tên|URL).")
@@ -537,7 +717,7 @@ fun LibraryScreen(onBack: () -> Unit) {
 @Composable
 fun FolderTab(all: List<Song>, onOpen: (String) -> Unit, pick: () -> Unit) {
     val groups = remember(all) { all.filter { it.path.isNotEmpty() }.groupBy { java.io.File(it.path).parent ?: "" } }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
+    ScrollList {
         item {
             Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 GradBtn("＋ Chọn thư mục nguồn") { pick() }
@@ -593,7 +773,7 @@ fun EmptyHint(text: String) {
 @Composable
 fun PlaylistList(onOpen: (String) -> Unit) {
     val pl = Lists.playlists
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
+    ScrollList {
         item {
             Row(Modifier.padding(16.dp)) { GradBtn("＋ Tạo playlist mới") { Lists.creatingPlaylist = true } }
         }
@@ -620,8 +800,9 @@ fun PlaylistList(onOpen: (String) -> Unit) {
 
 @Composable
 fun GroupList(groups: Map<String, List<Song>>, onOpen: (String) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
-        items(groups.keys.sorted()) { k ->
+    val keys = remember(groups) { groups.keys.sortedBy { sortKey(it) } }
+    ScrollList(letters = alphaIndex(keys)) {
+        items(keys) { k ->
             Row(
                 Modifier.fillMaxWidth().clickable { onOpen(k) }.padding(horizontal = 16.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -638,12 +819,14 @@ fun GroupList(groups: Map<String, List<Song>>, onOpen: (String) -> Unit) {
 }
 
 @Composable
-fun SongList(list: List<Song>, header: Boolean, playlist: String? = null) {
+fun SongList(list: List<Song>, header: Boolean, playlist: String? = null, alpha: Boolean = false) {
     if (list.isEmpty()) {
         EmptyHint("Không có bài hát. Hãy cấp quyền truy cập nhạc ở Cài đặt.")
         return
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
+    val shift = if (header) 1 else 0
+    val letters = if (alpha) alphaIndex(list.map { Engine.title(it) }).map { it.first to it.second + shift } else emptyList()
+    ScrollList(letters = letters) {
         if (header) {
             item {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -761,9 +944,35 @@ fun NowPlayingScreen(onLibrary: () -> Unit, onEq: () -> Unit, onSettings: () -> 
                             )
                         }
                     } else {
+                        val dx = remember { Animatable(0f) }
+                        val swipeScope = rememberCoroutineScope()
                         Box(
                             Modifier.fillMaxWidth().aspectRatio(1f)
+                                .graphicsLayer {
+                                    translationX = dx.value
+                                    alpha = 1f - (abs(dx.value) / 1200f).coerceIn(0f, 0.5f)
+                                }
                                 .shadow(24.dp, RoundedCornerShape(28.dp))
+                                .pointerInput(Unit) {
+                                    val thr = size.width * 0.22f
+                                    detectHorizontalDragGestures(
+                                        onDragEnd = {
+                                            val v = dx.value
+                                            swipeScope.launch {
+                                                if (v < -thr) {
+                                                    if (Engine.player.hasNextMediaItem()) Engine.player.seekToNextMediaItem()
+                                                } else if (v > thr) {
+                                                    Engine.player.seekToPreviousMediaItem()
+                                                }
+                                                dx.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = 400f))
+                                            }
+                                        },
+                                        onDragCancel = { swipeScope.launch { dx.animateTo(0f) } }
+                                    ) { change, amount ->
+                                        change.consume()
+                                        swipeScope.launch { dx.snapTo(dx.value + amount) }
+                                    }
+                                }
                                 .clickable(enabled = hasLyrics) { showLyrics = true }
                         ) {
                             Art(s, Modifier.fillMaxSize(), 720, 28.dp)

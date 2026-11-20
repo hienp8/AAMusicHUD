@@ -68,6 +68,7 @@ class MusicService : MediaBrowserServiceCompat() {
             updateState()
         }
         override fun onIsPlayingChanged(isPlaying: Boolean) { scheduleLyric() }
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) { updateQueue() }
         override fun onTimelineChanged(timeline: Timeline, reason: Int) { updateQueue() }
         override fun onPositionDiscontinuity(
             oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int
@@ -122,6 +123,7 @@ class MusicService : MediaBrowserServiceCompat() {
         }
 
         Engine.onExternalChange = { updateState() }
+        Engine.onLyricsChanged = { scheduleLyric() }
         ScreenCapture.onFrame = { bmp ->
             capArt = bmp
             capSeq++
@@ -157,7 +159,7 @@ class MusicService : MediaBrowserServiceCompat() {
         return START_STICKY
     }
 
-    // ---------- Android Auto: kết nối và chụp hình DiOTO ----------
+    // ---------- Android Auto: kết nối và chụp hình Wyn ----------
 
     private fun onCarType(t: Int) {
         val now = t == CarConnection.CONNECTION_TYPE_PROJECTION
@@ -174,7 +176,7 @@ class MusicService : MediaBrowserServiceCompat() {
         updateCapture()
     }
 
-    /** Chụp hình app (DiOTO...) làm ảnh bìa: chỉ chạy khi đang kết nối Android Auto. */
+    /** Chụp hình app (Wyn...) làm ảnh bìa: chỉ chạy khi đang kết nối Android Auto. */
     private fun updateCapture() {
         val prefs = Engine.prefs
         val pkg = prefs.getString("cap_pkg", "") ?: ""
@@ -193,12 +195,10 @@ class MusicService : MediaBrowserServiceCompat() {
 
     private fun scheduleLyric() {
         main.removeCallbacks(lyricRunnable)
-        if (!Engine.prefs.getBoolean("lock_lyrics", true) || !player.isPlaying) return
         val lines = Engine.lyricLines
-        if (lines.isEmpty()) {
+        if (!Engine.prefs.getBoolean("lock_lyrics", true) || lines.isEmpty()) {
             if (lyricLine.isNotEmpty()) { lyricLine = ""; pushMeta() }
-            main.postDelayed(lyricRunnable, 2500L)
-            return
+            return   // sẽ được gọi lại khi lời nạp xong
         }
         val pos = player.currentPosition + Engine.lyricOffsetMs
         val idx = lines.indexOfLast { it.timeMs <= pos + 150 }
@@ -207,6 +207,7 @@ class MusicService : MediaBrowserServiceCompat() {
             lyricLine = line
             pushMeta()
         }
+        if (!player.isPlaying) return   // đang tạm dừng: giữ dòng lời tại vị trí hiện tại
         val wait = if (idx + 1 < lines.size) lines[idx + 1].timeMs - pos else 3000L
         main.postDelayed(lyricRunnable, wait.coerceIn(250L, 4000L))
     }
@@ -326,8 +327,11 @@ class MusicService : MediaBrowserServiceCompat() {
             }
             parentId == "queue" -> {
                 val q = Engine.queue()
-                val cur = player.currentMediaItemIndex.coerceAtLeast(0)
-                for (i in cur until minOf(q.size, cur + 100)) {
+                val order = Engine.queueOrder()
+                val pos = order.indexOf(player.currentMediaItemIndex).coerceAtLeast(0)
+                for (k in pos until minOf(order.size, pos + 100)) {
+                    val i = order[k]
+                    if (i !in q.indices) continue
                     out += MediaBrowserCompat.MediaItem(
                         MediaDescriptionCompat.Builder().setMediaId("Q:$i").setTitle(Engine.title(q[i]))
                             .setSubtitle(Engine.artist(q[i])).build(),
@@ -418,9 +422,12 @@ class MusicService : MediaBrowserServiceCompat() {
             session.setQueue(null)
             return
         }
+        val order = Engine.queueOrder()
         val cur = player.currentMediaItemIndex
+        val pos = order.indexOf(cur).coerceAtLeast(0)
         val items = ArrayList<MediaSessionCompat.QueueItem>()
-        for (i in (cur - 20).coerceAtLeast(0) until (cur + 100).coerceAtMost(n)) {
+        for (k in (pos - 10).coerceAtLeast(0) until (pos + 100).coerceAtMost(order.size)) {
+            val i = order[k]
             val mi = player.getMediaItemAt(i)
             val s = Engine.songById(mi.mediaId)
             val title = s?.let { Engine.title(it) } ?: mi.mediaMetadata.title?.toString() ?: "?"
@@ -433,7 +440,7 @@ class MusicService : MediaBrowserServiceCompat() {
     }
 
     /**
-     * Ảnh bìa: đang nối xe và có hình chụp từ DiOTO thì dùng hình đó, ngược lại dùng ảnh bìa thật.
+     * Ảnh bìa: đang nối xe và có hình chụp từ Wyn thì dùng hình đó, ngược lại dùng ảnh bìa thật.
      * Dòng nghệ sĩ: dòng lời đang hát (nếu bật), ngược lại là tên nghệ sĩ.
      */
     private fun pushMeta() {
@@ -472,6 +479,7 @@ class MusicService : MediaBrowserServiceCompat() {
         main.removeCallbacks(lyricRunnable)
         ScreenCapture.onFrame = null
         Engine.onExternalChange = null
+        Engine.onLyricsChanged = null
         if (!ScreenCapture.manual) ScreenCapture.stop()
         Engine.prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         try { conn?.type?.removeObserver(connObserver) } catch (e: Throwable) { }

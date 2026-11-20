@@ -17,6 +17,7 @@ import android.media.audiofx.LoudnessEnhancer
 import android.media.audiofx.Virtualizer
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -39,6 +40,8 @@ import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.ln
@@ -144,7 +147,7 @@ object Engine {
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .build(),
-                false   // tự xử lý tiêu điểm âm thanh (xem requestFocus) để DiOTO/Wyn không làm dừng nhạc
+                false   // tự xử lý tiêu điểm âm thanh (xem requestFocus) để Wyn/Wyn không làm dừng nhạc
             )
             setHandleAudioBecomingNoisy(true)
             addListener(listener)
@@ -186,9 +189,116 @@ object Engine {
         index = l.associateBy { it.id }
         keyIndex = l.associateBy { Lists.key(it) }
         refilter()
+        fixQueueIds()
         refreshCurrent()
         restoreState()
     }
+
+    /** Id MediaStore có thể đổi sau khi sửa tag / quét lại: gắn lại các bài trong hàng đợi theo đường dẫn file. */
+    private fun fixQueueIds() {
+        try {
+            for (i in 0 until player.mediaItemCount) {
+                val mi = player.getMediaItemAt(i)
+                if (index.containsKey(mi.mediaId) || streamIndex.containsKey(mi.mediaId)) continue
+                val path = mi.localConfiguration?.uri?.path ?: continue
+                val s = keyIndex[path] ?: continue
+                val cur = i == player.currentMediaItemIndex
+                val pos = player.currentPosition
+                val was = player.playWhenReady
+                player.replaceMediaItem(i, item(s))
+                if (cur) {
+                    player.seekTo(i, pos)
+                    player.playWhenReady = was
+                }
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    /** Nạp lại một bài trong hàng đợi sau khi file được ghi lại. */
+    private fun reloadQueueItems(s: Song) {
+        try {
+            val cur = player.currentMediaItemIndex
+            val pos = player.currentPosition
+            val was = player.playWhenReady
+            var changedCur = false
+            for (i in 0 until player.mediaItemCount) {
+                if (player.getMediaItemAt(i).mediaId == s.id) {
+                    player.replaceMediaItem(i, item(s))
+                    if (i == cur) changedCur = true
+                }
+            }
+            if (changedCur) {
+                player.seekTo(cur, pos)
+                player.playWhenReady = was
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    // ---------------- Làm mới thư viện ----------------
+
+    var libraryMsg by mutableStateOf("")
+
+    /** Quét thêm bài mới trong các thư mục nhạc rồi nạp lại thư viện. */
+    fun refreshLibrary() {
+        libraryMsg = "Đang làm mới thư viện..."
+        thread {
+            val known = allSongs.map { it.path }.toHashSet()
+            val roots: List<File> = if (Lists.folders.isNotEmpty()) Lists.folders.map { File(it) } else {
+                val ext = Environment.getExternalStorageDirectory()
+                listOf(File(ext, "Music"), File(ext, "Download"))
+            }
+            val exts = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma")
+            val found = ArrayList<String>()
+            try {
+                for (r in roots) {
+                    if (!r.exists()) continue
+                    r.walkTopDown().onEnter { !it.name.startsWith(".") }
+                        .filter { it.isFile && !it.name.startsWith(".") && it.extension.lowercase() in exts }
+                        .forEach { if (it.path !in known && found.size < 5000) found += it.path }
+                }
+            } catch (e: Exception) {
+            }
+            if (found.isNotEmpty()) {
+                val latch = CountDownLatch(found.size)
+                MediaScannerConnection.scanFile(app, found.toTypedArray(), null) { _, _ -> latch.countDown() }
+                latch.await(30, TimeUnit.SECONDS)
+            }
+            val l = querySongs()
+            main.post {
+                applySongs(l)
+                libraryMsg = if (found.isEmpty()) "Thư viện đã mới nhất (${l.size} bài)" else "Đã thêm ${found.size} bài, tổng ${l.size} bài"
+            }
+        }
+    }
+
+    // ---------------- Thứ tự phát của hàng đợi ----------------
+
+    /** Chỉ số các bài theo đúng thứ tự sẽ phát (khi ngẫu nhiên: thứ tự đã xáo). */
+    fun queueOrder(): List<Int> {
+        val tl = player.currentTimeline
+        val n = player.mediaItemCount
+        if (tl.isEmpty || n == 0) return emptyList()
+        if (!player.shuffleModeEnabled) return (0 until n).toList()
+        val cur = player.currentMediaItemIndex
+        val before = ArrayList<Int>()
+        var p = tl.getPreviousWindowIndex(cur, Player.REPEAT_MODE_OFF, true)
+        while (p != C.INDEX_UNSET && before.size < n) {
+            before += p
+            p = tl.getPreviousWindowIndex(p, Player.REPEAT_MODE_OFF, true)
+        }
+        val after = ArrayList<Int>()
+        var nx = tl.getNextWindowIndex(cur, Player.REPEAT_MODE_OFF, true)
+        while (nx != C.INDEX_UNSET && after.size < n) {
+            after += nx
+            nx = tl.getNextWindowIndex(nx, Player.REPEAT_MODE_OFF, true)
+        }
+        return before.reversed() + cur + after
+    }
+
+    /** Service đăng ký để cập nhật dòng lời khi lời vừa nạp xong. */
+    var onLyricsChanged: (() -> Unit)? = null
 
     /** Lọc lại thư viện theo thư mục đã chọn và danh sách bài đã ẩn. */
     fun refilter() {
@@ -254,8 +364,11 @@ object Engine {
 
     // ---------------- Phát nhạc ----------------
 
+    private fun playUri(s: Song): Uri =
+        if (!s.streaming && s.path.isNotEmpty() && File(s.path).canRead()) Uri.fromFile(File(s.path)) else s.uri
+
     private fun item(s: Song) = MediaItem.Builder()
-        .setUri(s.uri)
+        .setUri(playUri(s))
         .setMediaId(s.id)
         .setMediaMetadata(
             MediaMetadata.Builder().setTitle(title(s)).setArtist(artist(s)).setAlbumTitle(album(s)).build()
@@ -598,7 +711,17 @@ object Engine {
     fun applyTags(s: Song, title: String?, artist: String?, album: String?, lyrics: String?, cover: ByteArray?): String? {
         var err: String? = null
         if (!s.streaming && s.path.isNotEmpty()) {
-            err = if (!Tags.canWrite()) "Chưa cấp quyền Quản lý tất cả tệp" else Tags.write(s.path, title, artist, album, lyrics, cover)
+            if (!Tags.canWrite()) {
+                err = "Chưa cấp quyền Quản lý tất cả tệp"
+            } else {
+                val playingThis = current?.path == s.path
+                if (playingThis) {
+                    main.post { player.pause() }
+                    Thread.sleep(200)
+                }
+                err = Tags.write(s.path, title, artist, album, lyrics, cover)
+                if (err == null) main.post { reloadQueueItems(s) }
+            }
         }
         val e = edits[s.id]
         val t = title?.takeIf { it.isNotBlank() } ?: e?.first ?: ""
@@ -689,7 +812,7 @@ object Engine {
                     if (l.isNotEmpty()) lines = l else plain = text
                 }
             }
-            main.post { lyricLines = lines; plainLyrics = plain }
+            main.post { lyricLines = lines; plainLyrics = plain; onLyricsChanged?.invoke() }
         }
     }
 
@@ -777,7 +900,7 @@ object Engine {
     private fun applyPreampFallback() { applyVolume() }
 
     // ---------------- Tiêu điểm âm thanh ----------------
-    // Hạ nhỏ khi có thông báo ngắn (Google Maps...), dừng khi có cuộc gọi. Khi đang chụp DiOTO / Wyn thì
+    // Hạ nhỏ khi có thông báo ngắn (Google Maps...), dừng khi có cuộc gọi. Khi đang chụp Wyn / Wyn thì
     // bỏ qua việc các app đó chiếm tiêu điểm lâu dài, để nhạc không bị dừng và không phát được trên Android Auto.
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
@@ -801,7 +924,7 @@ object Engine {
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
                 if (ScreenCapture.running) {
-                    Diag.audio = "Âm thanh: app khác (DiOTO/Wyn...) chiếm tiêu điểm lâu dài, nhạc vẫn tiếp tục phát"
+                    Diag.audio = "Âm thanh: app khác (Wyn/Wyn...) chiếm tiêu điểm lâu dài, nhạc vẫn tiếp tục phát"
                 } else {
                     resumeOnGain = false
                     player.pause()

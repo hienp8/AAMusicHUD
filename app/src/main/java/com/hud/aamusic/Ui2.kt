@@ -224,7 +224,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var lockLyrics by remember { mutableStateOf(prefs.getBoolean("lock_lyrics", true)) }
     var notifExtra by remember { mutableStateOf(prefs.getString("notif_extra", "shuffle") ?: "shuffle") }
-    var zhPinyin by remember { mutableStateOf(prefs.getBoolean("zh_pinyin", true)) }
+    var dsKey by remember { mutableStateOf(prefs.getString("deepseek_key", "") ?: "") }
+    var dsAuto by remember { mutableStateOf(prefs.getBoolean("ds_auto", true)) }
     var webSrc by remember { mutableStateOf(prefs.getBoolean("web_src", true)) }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
     var canWrite by remember { mutableStateOf(Tags.canWrite()) }
@@ -237,21 +238,17 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capY by remember { mutableStateOf(prefs.getInt("cap_y", 8)) }
     var capS by remember { mutableStateOf(prefs.getInt("cap_size", 92)) }
     var capBand by remember { mutableStateOf(prefs.getBoolean("cap_band", true)) }
-    var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 4)) }
-    var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 14)) }
-    var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 92)) }
+    var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 26)) }
+    var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 23)) }
+    var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 70)) }
     var pickingApp by remember { mutableStateOf(false) }
     var rootInfo by remember { mutableStateOf("") }
 
     fun putInt(k: String, v: Int) { prefs.edit().putInt(k, v).apply() }
-    fun setDioto() {
-        capX = 4; capY = 8; capS = 92; capRx = 4; capRy = 14; capRw = 92
-        prefs.edit().putInt("cap_x", 4).putInt("cap_y", 8).putInt("cap_size", 92)
-            .putInt("cap_rx", 4).putInt("cap_ry", 14).putInt("cap_rw", 92).apply()
-    }
     fun setWyn() {
-        capRx = 26; capRy = 23; capRw = 70
-        prefs.edit().putInt("cap_rx", 26).putInt("cap_ry", 23).putInt("cap_rw", 70).apply()
+        capX = 26; capY = 14; capS = 72; capRx = 26; capRy = 23; capRw = 70
+        prefs.edit().putInt("cap_x", 26).putInt("cap_y", 14).putInt("cap_size", 72)
+            .putInt("cap_rx", 26).putInt("cap_ry", 23).putInt("cap_rw", 70).apply()
     }
 
     LaunchedEffect(Unit) {
@@ -267,18 +264,6 @@ fun SettingsScreen(onBack: () -> Unit) {
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            CSection("Quyền truy cập", true) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    GradBtn("Cấp quyền nhạc, thông báo") { act?.requestPerms() }
-                    SoftBtn("Bật dịch vụ") { ctx.startServiceSafe() }
-                }
-                Text(
-                    if (canWrite) "✓ Đã cho phép ghi tag vào file nhạc" else "✗ Chưa cho phép ghi tag vào file nhạc",
-                    color = if (canWrite) Color(0xFF4CD964) else AccentB, fontSize = 13.sp
-                )
-                if (!canWrite) GradBtn("Cấp quyền Quản lý tất cả tệp") { act?.requestAllFiles() }
-            }
-
             CSection("Android Auto, thông báo, màn hình khoá") {
                 CheckRow("Hiện lời đồng bộ thay tên nghệ sĩ (Android Auto, thông báo, màn hình khoá)", lockLyrics) {
                     lockLyrics = it; prefs.edit().putBoolean("lock_lyrics", it).apply()
@@ -296,22 +281,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            CSection("Lời bài hát") {
-                CheckRow("Tìm thêm trên Kugeci và Lyricsify khi LRCLIB không có lời đồng bộ", webSrc) {
-                    webSrc = it; prefs.edit().putBoolean("web_src", it).apply()
-                }
-                CheckRow("Bài tiếng Trung: tự thêm phiên âm (pinyin)", zhPinyin) {
-                    zhPinyin = it; prefs.edit().putBoolean("zh_pinyin", it).apply()
-                }
+            CSection("Hình Wyn trên Android Auto (cần root)") {
                 Text(
-                    "Phiên âm được ghi vào tag lời cùng mốc thời gian với dòng gốc.",
-                    fontSize = 12.sp, color = Dim
-                )
-            }
-
-            CSection("Hình DiOTO trên Android Auto (cần root)") {
-                Text(
-                    "DiOTO được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên xe. " +
+                    "Wyn được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên xe. " +
                         "Khi ngắt kết nối, app đó sẽ bị đóng.",
                     fontSize = 12.sp, color = Dim
                 )
@@ -319,7 +291,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 CheckRow("Chụp cả khi chưa kết nối Android Auto (để xem trên màn hình khoá điện thoại)", capAlways) {
                     capAlways = it; prefs.edit().putBoolean("cap_always", it).apply()
                 }
-                CheckRow("Màn hình ảo riêng tư (giữ hình DiOTO khi khoá máy, không hiện đồng hồ)", capPrivate) {
+                CheckRow("Màn hình ảo riêng tư (giữ hình Wyn khi khoá máy, không hiện đồng hồ)", capPrivate) {
                     capPrivate = it; prefs.edit().putBoolean("cap_private", it).apply()
                 }
                 Text("Đổi hai mục trên xong, bấm Dừng rồi Thử chụp (hoặc ngắt và nối lại Android Auto) để áp dụng.", fontSize = 11.sp, color = Dim)
@@ -333,7 +305,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                             rootInfo = r.ifBlank { "Không có phản hồi (chưa cấp quyền root cho app?)" }
                         }
                     }
-                    SoftBtn("Mẫu DiOTO") { setDioto() }
                     SoftBtn("Mẫu Wyn") { setWyn() }
                 }
                 if (rootInfo.isNotEmpty()) Text(rootInfo, fontSize = 12.sp, color = AccentA)
@@ -371,11 +342,44 @@ fun SettingsScreen(onBack: () -> Unit) {
                 SoftBtn("Lưu radio") { prefs.edit().putString("streams", streams).apply() }
             }
 
+            CSection("Nâng cao (quyền truy cập, lời bài hát)") {
+                Text("Quyền truy cập", fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    GradBtn("Cấp quyền nhạc, thông báo") { act?.requestPerms() }
+                    SoftBtn("Bật dịch vụ") { ctx.startServiceSafe() }
+                }
+                Text(
+                    if (canWrite) "✓ Đã cho phép ghi tag vào file nhạc" else "✗ Chưa cho phép ghi tag vào file nhạc",
+                    color = if (canWrite) Color(0xFF4CD964) else AccentB, fontSize = 13.sp
+                )
+                if (!canWrite) GradBtn("Cấp quyền Quản lý tất cả tệp") { act?.requestAllFiles() }
+
+                Text("Lời bài hát", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
+                CheckRow("Tìm thêm trên Kugeci và Lyricsify khi chạy đề xuất trong Kiểm tra tag", webSrc) {
+                    webSrc = it; prefs.edit().putBoolean("web_src", it).apply()
+                }
+                Text("DeepSeek: thêm phiên âm pinyin và bản dịch tiếng Việt cho lời tiếng Trung", fontSize = 12.sp, color = Dim)
+                OutlinedTextField(
+                    dsKey, { dsKey = it; prefs.edit().putString("deepseek_key", it.trim()).apply() },
+                    label = { Text("DeepSeek API key") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                CheckRow("Tự gửi DeepSeek khi dán lời tiếng Trung", dsAuto) {
+                    dsAuto = it; prefs.edit().putBoolean("ds_auto", it).apply()
+                }
+                Text("Lời bài hát được gửi tới máy chủ DeepSeek và tính phí theo tài khoản của bạn.", fontSize = 11.sp, color = Dim)
+            }
+
             Box(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0xFF3A1620))
                     .clickable { act?.quitApp() }.padding(16.dp),
                 contentAlignment = Alignment.Center
-            ) { Text("⏻  Thoát hoàn toàn", color = Color(0xFFFF6B81), fontWeight = FontWeight.Bold) }
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconPower(Color(0xFFFF6B81), 22.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Thoát hoàn toàn", color = Color(0xFFFF6B81), fontWeight = FontWeight.Bold)
+                }
+            }
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -385,7 +389,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 capPkg = pkg
                 capLabel = label
                 prefs.edit().putString("cap_pkg", pkg).putString("cap_label", label).apply()
-                if ("dioto" in (label + pkg).lowercase()) setDioto()
+                if ("wyn" in (label + pkg).lowercase()) setWyn()
                 pickingApp = false
             },
             onDismiss = { pickingApp = false }
@@ -465,7 +469,7 @@ fun ScanScreen() {
             }
         }
         Spacer(Modifier.height(8.dp))
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ScrollList(bottom = 40.dp, spacing = 8.dp) {
             if (LibraryCheck.proposals.isNotEmpty()) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -702,37 +706,38 @@ fun TagEditor(s: Song) {
                         fontSize = 12.sp, color = Dim
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                        GradBtn("🎤 Tải lời tự động") {
+                        GradBtn("🈶 Phiên âm + dịch (DeepSeek)") {
                             scope.launch {
-                                status = "Đang tìm lời (LRCLIB, Kugeci, Lyricsify). Bài tiếng Trung sẽ được thêm phiên âm..."
-                                val r = withContext(Dispatchers.IO) {
-                                    Net.lyricsAll(title.ifBlank { query }, artist, album, s.durationMs / 1000)
-                                        ?.let { Chinese.maybeAnnotate(it) }
-                                }
-                                if (r == null) {
-                                    status = "Không tìm thấy lời. " + LyricsWeb.lastNotes() + ". Dùng nút tìm lời trên web rồi dán vào ô bên dưới."
-                                } else {
-                                    lyricsText = r.text
+                                status = "Đang gửi DeepSeek (có thể mất vài chục giây)..."
+                                val (res, msg) = withContext(Dispatchers.IO) { DeepSeek.annotate(lyricsText) }
+                                if (res != null) {
+                                    lyricsText = res
                                     lyricsDirty = true
-                                    status = (if (r.synced) "Đã tải lời đồng bộ" else "Chỉ có lời thường (không chạy theo nhạc)") +
-                                        " từ ${r.source}. Bấm Lưu vào file để ghi."
+                                    status = "$msg. Kiểm tra rồi bấm Lưu vào file."
+                                } else {
+                                    status = msg
                                 }
                             }
                         }
                         SoftBtn("🌐 Tìm lời trên web") { openWeb("${title.ifBlank { query }} $artist lời bài hát", false) }
                         SoftBtn("📋 Dán lời") {
-                            clipText().takeIf { it.isNotBlank() }?.let { lyricsText = it; lyricsDirty = true }
-                        }
-                        SoftBtn("🈶 Thêm phiên âm (pinyin)") {
-                            scope.launch {
-                                status = "Đang thêm phiên âm..."
-                                val res = withContext(Dispatchers.IO) { Chinese.annotate(lyricsText, true) }
-                                if (res == null) {
-                                    status = "Không có gì để thêm (không phải lời tiếng Trung hoặc đã có phiên âm)."
-                                } else {
-                                    lyricsText = res
-                                    lyricsDirty = true
-                                    status = "Đã thêm phiên âm. Bấm Lưu vào file để ghi."
+                            val t = clipText()
+                            if (t.isNotBlank()) {
+                                lyricsText = t
+                                lyricsDirty = true
+                                val key = Engine.prefs.getString("deepseek_key", "").orEmpty()
+                                if (Chinese.isChinese(t) && key.isNotBlank() && Engine.prefs.getBoolean("ds_auto", true)) {
+                                    scope.launch {
+                                        status = "Lời tiếng Trung: đang gửi DeepSeek..."
+                                        val (res, msg) = withContext(Dispatchers.IO) { DeepSeek.annotate(t) }
+                                        if (res != null) {
+                                            lyricsText = res
+                                            lyricsDirty = true
+                                            status = "$msg. Kiểm tra rồi bấm Lưu vào file."
+                                        } else {
+                                            status = msg
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -958,7 +963,7 @@ fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
             Text(s?.let { Engine.artist(it) } ?: "", color = Dim, fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 Pill("Lời bài hát", !showImage) { showImage = false }
-                Pill("Hình DiOTO", showImage) { showImage = true }
+                Pill("Hình Wyn", showImage) { showImage = true }
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) {
                 if (showImage) {
@@ -966,7 +971,7 @@ fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
                     if (f != null) {
                         Image(bitmap = f.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                     } else {
-                        EmptyHint("Chưa có hình. Bật mục Hình DiOTO trong Cài đặt, rồi kết nối Android Auto hoặc bật \"Chụp cả khi chưa kết nối\".")
+                        EmptyHint("Chưa có hình. Bật mục Hình Wyn trong Cài đặt, rồi kết nối Android Auto hoặc bật \"Chụp cả khi chưa kết nối\".")
                     }
                 } else {
                     LyricsView()
@@ -998,22 +1003,31 @@ fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
 fun QueueScreen(onBack: () -> Unit) {
     val ver = Engine.queueVersion
     val cur = Engine.current
+    val shuffle = Engine.shuffle
     val q = remember(ver, cur?.id) { Engine.queue() }
+    val order = remember(ver, cur?.id, shuffle) { Engine.queueOrder() }
     val curIdx = remember(ver, cur?.id) { Engine.player.currentMediaItemIndex }
-    Column(Modifier.fillMaxSize().background(Bg)) {
+    Column(Modifier.fillMaxSize()) {
         ScreenHeader("Hàng đợi (${q.size})", onBack) { SoftBtn("Xoá hết") { Engine.clearQueue() } }
+        if (shuffle) {
+            Text(
+                "Đang phát ngẫu nhiên: danh sách theo đúng thứ tự sẽ phát",
+                color = AccentA, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+            )
+        }
         if (q.isEmpty()) {
             EmptyHint("Hàng đợi trống. Dùng menu ⋮ của bài để Phát tiếp theo hoặc Thêm vào hàng đợi.")
         } else {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
-                itemsIndexed(q) { i, s ->
+            ScrollList(bottom = 40.dp) {
+                itemsIndexed(order) { k, i ->
+                    val s = q.getOrNull(i) ?: return@itemsIndexed
                     val isCur = i == curIdx
                     Row(
                         Modifier.fillMaxWidth().background(if (isCur) Color(0x22FF7A18) else Color.Transparent)
                             .clickable { Engine.jumpTo(i) }.padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${i + 1}", color = Dim, fontSize = 12.sp, modifier = Modifier.width(30.dp))
+                        Text("${k + 1}", color = Dim, fontSize = 12.sp, modifier = Modifier.width(30.dp))
                         Art(s, Modifier.size(44.dp), 96, 10.dp)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
@@ -1023,8 +1037,10 @@ fun QueueScreen(onBack: () -> Unit) {
                             )
                             Text(Engine.artist(s), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp)
                         }
-                        Text("▲", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i - 1) }.padding(10.dp))
-                        Text("▼", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i + 1) }.padding(10.dp))
+                        if (!shuffle) {
+                            Text("▲", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i - 1) }.padding(10.dp))
+                            Text("▼", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i + 1) }.padding(10.dp))
+                        }
                         Text("✕", color = AccentB, modifier = Modifier.pressable { Engine.removeFromQueue(i) }.padding(10.dp))
                     }
                 }
@@ -1032,7 +1048,6 @@ fun QueueScreen(onBack: () -> Unit) {
         }
     }
 }
-
 
 // ------------------------------------------------------------------ Ảnh từ internet / từ máy (xem trước)
 
