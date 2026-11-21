@@ -89,9 +89,9 @@ class MusicService : MediaBrowserServiceCompat() {
         super.onCreate()
         session = MediaSessionCompat(this, "AAMusicHud").apply {
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() { player.play() }
+                override fun onPlay() { Engine.resume() }
                 override fun onPause() { player.pause() }
-                override fun onStop() { player.stop() }
+                override fun onStop() { player.pause() }
                 override fun onSkipToNext() { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }
                 override fun onSkipToPrevious() { player.seekToPreviousMediaItem() }
                 override fun onSeekTo(pos: Long) { player.seekTo(pos) }

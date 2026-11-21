@@ -672,7 +672,7 @@ fun LibraryScreen(onBack: () -> Unit) {
             Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Bài hát", "Thư mục", "Yêu thích", "Playlist", "Album", "Nghệ sĩ", "Radio").forEachIndexed { i, t ->
+            listOf("Bài hát", "Thư mục", "Yêu thích", "Playlist", "Album", "Nghệ sĩ", "Radio", "Online").forEachIndexed { i, t ->
                 Pill(t, sub == i && filter == null) { sub = i; filter = null }
             }
         }
@@ -712,6 +712,7 @@ fun LibraryScreen(onBack: () -> Unit) {
             sub == 3 -> PlaylistList { filter = "playlist" to it }
             sub == 4 -> GroupList(sorted.filter { match(it) }.groupBy { Engine.album(it) }) { filter = "album" to it }
             sub == 5 -> GroupList(sorted.filter { match(it) }.groupBy { Engine.artist(it) }) { filter = "artist" to it }
+            sub == 7 -> OnlineTab()
             else -> {
                 val radio = Engine.streams()
                 if (radio.isEmpty()) EmptyHint("Chưa có radio. Thêm ở Cài đặt (mỗi dòng: Tên|URL).")
@@ -1113,32 +1114,46 @@ fun LyricsView() {
     }
 }
 
-/** Chỉnh lời sớm hơn (+) hoặc chậm hơn (−) theo bước 0,5 / 1 / 2 giây; có thể lưu vào file. */
+/** Thanh chỉnh lời gọn (một hàng); bấm ⏱ để mở rộng thêm bước 1s, 2s, đặt lại và lưu vào file. */
 @Composable
 fun LyricOffsetBar() {
     val off = Engine.lyricOffsetMs
+    var expanded by remember { mutableStateOf(false) }
     val label = when {
         off == 0 -> "Khớp gốc"
-        off > 0 -> "Lời sớm hơn %.1f giây".format(off / 1000f)
-        else -> "Lời chậm hơn %.1f giây".format(-off / 1000f)
+        off > 0 -> "Sớm %.1fs".format(off / 1000f)
+        else -> "Chậm %.1fs".format(-off / 1000f)
     }
     Column(
-        Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(22.dp))
-            .background(Color(0x99151922)).border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(22.dp)).padding(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        Modifier.fillMaxWidth().padding(top = 4.dp).clip(RoundedCornerShape(16.dp))
+            .background(Color(0x99151922)).border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(16.dp))
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                label, color = if (off == 0) Dim else AccentA, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                modifier = Modifier.pressable { Engine.resetLyricOffset() }
+                "⏱ $label", color = if (off == 0) Dim else AccentA, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f).pressable { expanded = !expanded }
             )
-            Text("   (+ sớm, − chậm)", color = Dim, fontSize = 11.sp)
+            OffsetChip(-500)
+            OffsetChip(500)
+            Text(
+                if (expanded) "▴" else "▾", color = Dim, fontSize = 16.sp,
+                modifier = Modifier.pressable { expanded = !expanded }.padding(horizontal = 6.dp)
+            )
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            for (d in listOf(-2000, -1000, -500, 500, 1000, 2000)) OffsetChip(d)
+        if (expanded) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                for (d in listOf(-2000, -1000, 1000, 2000)) OffsetChip(d)
+            }
+            Text("(+ lời hiện sớm hơn, − chậm hơn)", color = Dim, fontSize = 10.sp, modifier = Modifier.padding(top = 2.dp))
+            if (off != 0) {
+                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SoftBtn("Đặt lại") { Engine.resetLyricOffset() }
+                    GradBtn("💾 Lưu vào file") { Engine.bakeLyricOffset() }
+                }
+            }
         }
-        if (off != 0) GradBtn("💾 Lưu vào file (tự cộng/trừ thời gian các dòng)") { Engine.bakeLyricOffset() }
         if (Engine.lyricSaveMsg.isNotEmpty()) {
             Text(Engine.lyricSaveMsg, color = AccentA, fontSize = 11.sp, textAlign = TextAlign.Center)
         }
@@ -1155,9 +1170,9 @@ fun OffsetChip(delta: Int) {
         Modifier.pressable { Engine.adjustLyricOffset(delta) }
             .clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(colors))
             .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 10.dp, vertical = 5.dp),
         contentAlignment = Alignment.Center
-    ) { Text(txt, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White) }
+    ) { Text(txt, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White) }
 }
 
 /** Dòng tiếng Việt có ít nhất một chữ cái chỉ có trong tiếng Việt (để phân biệt với phiên âm pinyin). */

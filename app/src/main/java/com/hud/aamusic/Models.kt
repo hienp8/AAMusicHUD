@@ -13,7 +13,8 @@ data class Song(
     val uri: Uri,
     val durationMs: Long,
     val streaming: Boolean = false,
-    val path: String = ""
+    val path: String = "",
+    val artUrl: String = ""
 )
 
 data class LrcLine(val timeMs: Long, val text: String, val extras: List<String> = emptyList())

@@ -33,6 +33,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.ExoPlayer
@@ -100,6 +101,8 @@ object Engine {
     private var attachedSession = -1
 
     private var index: Map<String, Song> = emptyMap()
+    private val onlineIndex = HashMap<String, Song>()
+    private var errCount = 0
     private var keyIndex: Map<String, Song> = emptyMap()
     private var streamIndex: Map<String, Song> = emptyMap()
     private val edits = HashMap<String, Triple<String, String, String>>()
@@ -127,7 +130,21 @@ object Engine {
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (playWhenReady) requestFocus() else if (!resumeOnGain) abandonFocus()
         }
+        override fun onPlayerError(error: PlaybackException) {
+            Diag.audio = "Lỗi phát nhạc: ${error.errorCodeName}"
+            errCount++
+            if (errCount <= 3) {
+                main.postDelayed({
+                    try {
+                        if (player.hasNextMediaItem()) player.seekToNextMediaItem()
+                        player.prepare()
+                        player.play()
+                    } catch (e: Exception) { }
+                }, 300)
+            }
+        }
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) errCount = 0
             if (player.duration > 0) durationMs = player.duration
             if (playbackState == Player.STATE_READY) {
                 if (dp == null && eq == null) attachEffects(player.audioSessionId)
@@ -425,7 +442,7 @@ object Engine {
         val out = ArrayList<Song>()
         for (i in 0 until player.mediaItemCount) {
             val mi = player.getMediaItemAt(i)
-            val s = index[mi.mediaId] ?: streamIndex[mi.mediaId] ?: Song(
+            val s = index[mi.mediaId] ?: streamIndex[mi.mediaId] ?: onlineIndex[mi.mediaId] ?: Song(
                 mi.mediaId, mi.mediaMetadata.title?.toString() ?: "?", mi.mediaMetadata.artist?.toString() ?: "", "",
                 mi.localConfiguration?.uri ?: Uri.EMPTY, 0L
             )
@@ -492,7 +509,21 @@ object Engine {
         if (m.isNotEmpty()) play(m, 0)
     }
 
-    fun togglePlay() { if (player.isPlaying) player.pause() else player.play() }
+    /** Phát tiếp: tự chuẩn bị lại player nếu đã dừng (stop) hoặc đã kết thúc, tránh trường hợp bấm mà không phản ứng. */
+    fun resume() {
+        if (player.mediaItemCount == 0) return
+        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition()
+        player.play()
+    }
+
+    fun togglePlay() { if (player.isPlaying) player.pause() else resume() }
+
+    /** Phát danh sách bài online (nhạc từ Jamendo...). */
+    fun playOnline(list: List<Song>, startIndex: Int) {
+        for (x in list) onlineIndex[x.id] = x
+        play(list, startIndex)
+    }
     fun toggleShuffle() { player.shuffleModeEnabled = !player.shuffleModeEnabled }
     fun cycleRepeat() {
         player.repeatMode = when (player.repeatMode) {
@@ -516,7 +547,7 @@ object Engine {
 
     fun refreshCurrent() {
         val id = player.currentMediaItem?.mediaId
-        val s = if (id == null) null else (index[id] ?: streamIndex[id])
+        val s = if (id == null) null else (index[id] ?: streamIndex[id] ?: onlineIndex[id])
         if (s?.id != current?.id) {
             current = s
             lyricOffsetMs = s?.let { offsets[Lists.key(it)] } ?: 0
@@ -763,6 +794,10 @@ object Engine {
         val key = "${s.id}:$size:$artVersion"
         artCache.get(key)?.let { return it }
         var bmp: Bitmap? = null
+        if (s.artUrl.isNotEmpty()) {
+            bmp = Net.thumb(s.artUrl)?.let { scaled(it, size) }
+            if (bmp != null) { artCache.put(key, bmp); return bmp }
+        }
         val f = artFile(s)
         if (f.exists()) bmp = BitmapFactory.decodeFile(f.path)?.let { scaled(it, size) }
         if (bmp == null && !s.streaming) {

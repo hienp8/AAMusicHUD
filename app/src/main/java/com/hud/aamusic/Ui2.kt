@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.graphics.Bitmap
+import android.widget.Toast
 import android.graphics.BitmapFactory
 import android.provider.DocumentsContract
 import androidx.compose.runtime.produceState
@@ -226,6 +227,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var notifExtra by remember { mutableStateOf(prefs.getString("notif_extra", "shuffle") ?: "shuffle") }
     var dsKey by remember { mutableStateOf(prefs.getString("deepseek_key", "") ?: "") }
     var dsAuto by remember { mutableStateOf(prefs.getBoolean("ds_auto", true)) }
+    var dsTest by remember { mutableStateOf("") }
+    var jamendoId by remember { mutableStateOf(prefs.getString("jamendo_id", "") ?: "") }
     var webSrc by remember { mutableStateOf(prefs.getBoolean("web_src", true)) }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
     var canWrite by remember { mutableStateOf(Tags.canWrite()) }
@@ -366,7 +369,22 @@ fun SettingsScreen(onBack: () -> Unit) {
                 CheckRow("Tự gửi DeepSeek khi dán lời tiếng Trung", dsAuto) {
                     dsAuto = it; prefs.edit().putBoolean("ds_auto", it).apply()
                 }
+                SoftBtn("Kiểm tra DeepSeek key") {
+                    scope.launch {
+                        dsTest = "Đang kiểm tra..."
+                        val (r, m) = withContext(Dispatchers.IO) { DeepSeek.annotate("[00:01.00]你好，世界\n[00:03.00]我爱你") }
+                        dsTest = if (r != null) "OK: $m\n$r" else m
+                    }
+                }
+                if (dsTest.isNotEmpty()) Text(dsTest, fontSize = 12.sp, color = AccentA)
                 Text("Lời bài hát được gửi tới máy chủ DeepSeek và tính phí theo tài khoản của bạn.", fontSize = 11.sp, color = Dim)
+
+                Text("Nhạc online (Jamendo, nhạc Creative Commons)", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
+                OutlinedTextField(
+                    jamendoId, { jamendoId = it; prefs.edit().putString("jamendo_id", it.trim()).apply() },
+                    label = { Text("Jamendo Client ID (miễn phí tại developer.jamendo.com)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             Box(
@@ -536,6 +554,8 @@ fun TagEditor(s: Song) {
     var status by remember(s.id) { mutableStateOf("") }
     var hasCover by remember(s.id) { mutableStateOf(false) }
     var useNewCover by remember(s.id) { mutableStateOf(true) }
+    var dsBusy by remember(s.id) { mutableStateOf(false) }
+    var dsMsg by remember(s.id) { mutableStateOf("") }
     var query by remember(s.id) {
         mutableStateOf(
             if (s.path.isNotEmpty()) LibraryCheck.guess(s.path).let { "${it.second} ${it.first}".trim() } else Engine.title(s)
@@ -706,19 +726,6 @@ fun TagEditor(s: Song) {
                         fontSize = 12.sp, color = Dim
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                        GradBtn("🈶 Phiên âm + dịch (DeepSeek)") {
-                            scope.launch {
-                                status = "Đang gửi DeepSeek (có thể mất vài chục giây)..."
-                                val (res, msg) = withContext(Dispatchers.IO) { DeepSeek.annotate(lyricsText) }
-                                if (res != null) {
-                                    lyricsText = res
-                                    lyricsDirty = true
-                                    status = "$msg. Kiểm tra rồi bấm Lưu vào file."
-                                } else {
-                                    status = msg
-                                }
-                            }
-                        }
                         SoftBtn("🌐 Tìm lời trên web") { openWeb("${title.ifBlank { query }} $artist lời bài hát", false) }
                         SoftBtn("📋 Dán lời") {
                             val t = clipText()
@@ -726,22 +733,46 @@ fun TagEditor(s: Song) {
                                 lyricsText = t
                                 lyricsDirty = true
                                 val key = Engine.prefs.getString("deepseek_key", "").orEmpty()
-                                if (Chinese.isChinese(t) && key.isNotBlank() && Engine.prefs.getBoolean("ds_auto", true)) {
+                                if (Chinese.isChinese(t) && key.isNotBlank() && Engine.prefs.getBoolean("ds_auto", true) && !dsBusy) {
+                                    dsBusy = true
+                                    dsMsg = "Lời tiếng Trung: đang gửi DeepSeek..."
                                     scope.launch {
-                                        status = "Lời tiếng Trung: đang gửi DeepSeek..."
                                         val (res, msg) = withContext(Dispatchers.IO) { DeepSeek.annotate(t) }
+                                        if (res != null) { lyricsText = res; lyricsDirty = true }
+                                        dsMsg = msg
+                                        dsBusy = false
+                                        Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        }
+                        // Nút phiên âm + dịch (DeepSeek) nằm cuối hàng như trước
+                        GradBtn(if (dsBusy) "⏳ Đang gửi DeepSeek..." else "🈶 Phiên âm + dịch (DeepSeek)") {
+                            if (!dsBusy) {
+                                if (lyricsText.isBlank()) {
+                                    dsMsg = "Chưa có lời: hãy dán lời bài hát vào ô bên dưới trước."
+                                    Toast.makeText(ctx, dsMsg, Toast.LENGTH_LONG).show()
+                                } else {
+                                    dsBusy = true
+                                    dsMsg = "Đang gửi DeepSeek, có thể mất vài chục giây..."
+                                    Toast.makeText(ctx, "Đang gửi DeepSeek...", Toast.LENGTH_SHORT).show()
+                                    scope.launch {
+                                        val (res, msg) = withContext(Dispatchers.IO) { DeepSeek.annotate(lyricsText) }
                                         if (res != null) {
                                             lyricsText = res
                                             lyricsDirty = true
-                                            status = "$msg. Kiểm tra rồi bấm Lưu vào file."
+                                            dsMsg = "$msg. Lời mới đã nằm trong ô bên dưới, kiểm tra rồi bấm Lưu vào file."
                                         } else {
-                                            status = msg
+                                            dsMsg = msg
                                         }
+                                        dsBusy = false
+                                        Toast.makeText(ctx, dsMsg, Toast.LENGTH_LONG).show()
                                     }
                                 }
                             }
                         }
                     }
+                    if (dsMsg.isNotEmpty()) Text(dsMsg, color = AccentA, fontSize = 13.sp)
                     OutlinedTextField(
                         value = lyricsText,
                         onValueChange = { lyricsText = it; lyricsDirty = true },
@@ -1080,5 +1111,91 @@ fun PickedImage(bytes: ByteArray, modifier: Modifier = Modifier) {
         if (bmp != null) {
             Image(bitmap = bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
+    }
+}
+
+
+// ------------------------------------------------------------------ Nhạc online (Jamendo)
+
+@Composable
+fun OnlineTab() {
+    val scope = rememberCoroutineScope()
+    var q by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<OnlineTrack>>(emptyList()) }
+    var msg by remember { mutableStateOf("") }
+    var dlFor by remember { mutableStateOf<OnlineTrack?>(null) }
+    val hasKey = Engine.prefs.getString("jamendo_id", "").orEmpty().isNotBlank()
+
+    fun doSearch() {
+        if (q.isBlank()) return
+        msg = "Đang tìm..."
+        scope.launch {
+            val (list, m) = withContext(Dispatchers.IO) { Online.search(q.trim()) }
+            results = list ?: emptyList()
+            msg = m
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Text(
+            if (hasKey) "Nhạc Creative Commons từ Jamendo: nghe trực tiếp, tải về nếu tác giả cho phép."
+            else "Cần Jamendo Client ID (miễn phí tại developer.jamendo.com): nhập ở Cài đặt > Nâng cao.",
+            color = Dim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+        )
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                q, { q = it }, singleLine = true, placeholder = { Text("Tìm bài hát, nghệ sĩ...", color = Dim) },
+                shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            GradBtn("Tìm") { doSearch() }
+        }
+        if (msg.isNotEmpty()) Text(msg, color = AccentA, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
+        ScrollList {
+            itemsIndexed(results) { i, t ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { Engine.playOnline(results.map { Online.toSong(it) }, i) }
+                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RemoteImage(t.imageUrl, Modifier.size(56.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                        Text("${t.artist} • ${t.album}", maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp)
+                    }
+                    if (t.downloadAllowed) {
+                        Text("⬇", fontSize = 20.sp, modifier = Modifier.pressable { dlFor = t }.padding(10.dp))
+                    }
+                }
+            }
+        }
+    }
+
+    val d = dlFor
+    if (d != null) {
+        AlertDialog(
+            onDismissRequest = { dlFor = null },
+            containerColor = CardC,
+            title = { Text("Tải về: ${d.title}", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Chọn chất lượng. File lưu vào thư mục Music/AA Music.", fontSize = 12.sp, color = Dim)
+                    for ((fmt, label) in Online.QUALITIES) {
+                        SoftBtn(label, Modifier.fillMaxWidth()) {
+                            dlFor = null
+                            msg = "Đang tải ${d.title}..."
+                            scope.launch(Dispatchers.IO) {
+                                val err = Online.download(d, fmt) { m -> msg = m }
+                                msg = err ?: "Đã tải xong: ${d.title}. Bấm 🔄 để làm mới thư viện nếu chưa thấy."
+                            }
+                        }
+                    }
+                    if (d.license.isNotEmpty()) Text("Giấy phép: ${d.license}", fontSize = 11.sp, color = Dim)
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { dlFor = null }) { Text("Đóng") } }
+        )
     }
 }

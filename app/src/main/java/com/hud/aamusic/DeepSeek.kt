@@ -41,7 +41,10 @@ object DeepSeek {
             val code = c.responseCode
             val txt = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
             if (code !in 200..299) {
-                lastError = "DeepSeek: HTTP $code" + when (code) {
+                val detail = try {
+                    JSONObject(txt).optJSONObject("error")?.optString("message").orEmpty().take(160)
+                } catch (e: Exception) { txt.take(120) }
+                lastError = "DeepSeek: HTTP $code" + (if (detail.isNotBlank()) " - $detail" else "") + when (code) {
                     401 -> " (API key sai)"
                     402 -> " (hết số dư tài khoản)"
                     429 -> " (gửi quá nhanh, thử lại sau)"
