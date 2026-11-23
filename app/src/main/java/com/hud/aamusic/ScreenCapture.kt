@@ -19,6 +19,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
+import kotlin.math.abs
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlin.concurrent.thread
@@ -155,6 +156,8 @@ object ScreenCapture {
             main.removeCallbacks(relaunchRunnable)
             main.postDelayed(relaunchRunnable, 30000L)
         }
+        // Tuỳ chọn: bật màn hình đen (giữ máy không khoá) để app tốc độ không bị dừng
+        if (Engine.prefs.getBoolean("dim_auto", false)) Root.run("am start -n ${ctx.packageName}/.DimActivity")
         return null
     }
 
@@ -188,6 +191,34 @@ object ScreenCapture {
         } catch (e: Exception) { }
     }
 
+    /** Làm trong suốt các điểm ảnh có màu gần với màu nền của hàng tương ứng trong khung hình gốc. */
+    private fun keyOut(bmp: Bitmap, full: Bitmap, bgx: Int, rowSrc: (Int) -> Int, sens: Int): Bitmap {
+        val out = bmp.copy(Bitmap.Config.ARGB_8888, true)
+        val w = out.width
+        val h = out.height
+        val px = IntArray(w * h)
+        out.getPixels(px, 0, w, 0, 0, w, h)
+        val lo = sens * 0.5f
+        val hi = sens * 2f
+        for (y in 0 until h) {
+            val sy = rowSrc(y).coerceIn(0, full.height - 1)
+            val b = full.getPixel(bgx.coerceIn(0, full.width - 1), sy)
+            val br = (b shr 16) and 255
+            val bg = (b shr 8) and 255
+            val bb = b and 255
+            for (x in 0 until w) {
+                val c = px[y * w + x]
+                val a0 = (c ushr 24) and 255
+                if (a0 == 0) continue
+                val d = abs(((c shr 16) and 255) - br) + abs(((c shr 8) and 255) - bg) + abs((c and 255) - bb)
+                val f = ((d - lo) / (hi - lo)).coerceIn(0f, 1f)
+                px[y * w + x] = ((a0 * f).toInt() shl 24) or (c and 0x00FFFFFF)
+            }
+        }
+        out.setPixels(px, 0, w, 0, 0, w, h)
+        return out
+    }
+
     private fun grab(r: ImageReader, w: Int, h: Int) {
         val img = try { r.acquireLatestImage() } catch (e: Exception) { null } ?: return
         try {
@@ -201,7 +232,8 @@ object ScreenCapture {
             val full = if (pw != w) Bitmap.createBitmap(raw, 0, 0, w, h) else raw
 
             val prefs = Engine.prefs
-            val finalArt: Bitmap
+            var rowMap: (Int) -> Int = { it }
+            val art0: Bitmap
             if (prefs.getBoolean("cap_band", true)) {
                 // Ảnh gửi lên xe là hình vuông lấy quanh dải ngang đã chọn (dải nằm đúng nửa giữa).
                 // Khi Android Auto cắt giữa còn nửa ảnh thì dải vẫn đầy đủ; không ghép chồng hình.
@@ -211,28 +243,34 @@ object ScreenCapture {
                 val ry = (h * prefs.getInt("cap_ry", 23) / 100f).toInt().coerceIn(0, (h - rh).coerceAtLeast(0))
                 val side = rw
                 val top = ry + rh / 2 - side / 2
+                val k = 512f / side
                 val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
                 val cv = Canvas(out)
                 val sy0 = top.coerceAtLeast(0)
                 val sy1 = (top + side).coerceAtMost(h)
                 if (sy1 > sy0) {
-                    val k = 512f / side
                     cv.drawBitmap(
                         full, Rect(rx, sy0, rx + side, sy1),
                         RectF(0f, (sy0 - top) * k, 512f, (sy1 - top) * k), Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
                     )
                 }
-                finalArt = out
+                rowMap = { y -> top + (y / k).toInt() }
+                art0 = out
             } else {
-                val xp = prefs.getInt("cap_x", 4)
-                val yp = prefs.getInt("cap_y", 8)
-                val sp = prefs.getInt("cap_size", 92)
+                val xp = prefs.getInt("cap_x", 26)
+                val yp = prefs.getInt("cap_y", 14)
+                val sp = prefs.getInt("cap_size", 72)
                 val cw = (w * sp / 100f).toInt().coerceIn(32, w)
                 val x0 = (w * xp / 100f).toInt().coerceIn(0, w - cw)
                 val y0 = (h * yp / 100f).toInt().coerceIn(0, (h - cw).coerceAtLeast(0))
                 val ch = cw.coerceAtMost(h - y0)
-                finalArt = Bitmap.createScaledBitmap(Bitmap.createBitmap(full, x0, y0, cw, ch), 512, 512, true)
+                rowMap = { y -> y0 + y * ch / 512 }
+                art0 = Bitmap.createScaledBitmap(Bitmap.createBitmap(full, x0, y0, cw, ch), 512, 512, true)
             }
+            // Nền trong suốt: xoá màu nền của app (ước lượng theo từng hàng) để hình rõ hơn trên xe
+            val finalArt: Bitmap = if (prefs.getBoolean("cap_key", true)) {
+                keyOut(art0, full, (w * 0.05f).toInt(), rowMap, prefs.getInt("cap_key_s", 40))
+            } else art0
             val small = Bitmap.createScaledBitmap(full, w / 2, h / 2, true)
             main.post {
                 preview = small

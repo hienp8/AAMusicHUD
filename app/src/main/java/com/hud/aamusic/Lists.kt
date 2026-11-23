@@ -127,6 +127,14 @@ object Lists {
         Engine.refilter()
     }
 
+    /** Cập nhật đường dẫn trong yêu thích / playlist / bài ẩn khi file được đổi tên. */
+    fun renamePath(old: String, new: String) {
+        favorites = favorites.map { if (it == old) new else it }
+        hidden = hidden.map { if (it == old) new else it }
+        playlists = playlists.mapValues { e -> e.value.map { if (it == old) new else it } }
+        save()
+    }
+
     /** Gỡ bài khỏi mọi danh sách (khi đã xoá file). */
     fun forget(s: Song) {
         val k = key(s)

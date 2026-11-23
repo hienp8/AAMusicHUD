@@ -12,6 +12,13 @@ object Chinese {
         return han >= 6 && han * 100 / letters >= 40 && kana * 10 < han
     }
 
+    /** "Thất Lý Hương (七里香)" -> "Thất Lý Hương"; trả về null nếu chuỗi không có dạng đó. */
+    fun viPart(s: String): String? {
+        val m = Regex("^(.*?)\\s*\\(([^)]*[\\u4e00-\\u9fff][^)]*)\\)\\s*$").find(s) ?: return null
+        val vn = m.groupValues[1].trim()
+        return if (vn.isNotEmpty() && vn.none { isHan(it) }) vn else null
+    }
+
     fun fmtTag(ms: Long): String {
         val m = ms / 60000
         val s = (ms / 1000) % 60

@@ -130,6 +130,12 @@ object LibraryCheck {
         }
     }
 
+    fun renamePath(old: String, new: String) {
+        states = states.map { if (it.path == old) it.copy(path = new) else it }
+        saveAsync()
+        refreshPath(new)
+    }
+
     fun dismiss(p: Proposal) {
         proposals.remove(p)
         saveAsync()

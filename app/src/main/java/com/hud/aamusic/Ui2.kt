@@ -227,6 +227,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var notifExtra by remember { mutableStateOf(prefs.getString("notif_extra", "shuffle") ?: "shuffle") }
     var dsKey by remember { mutableStateOf(prefs.getString("deepseek_key", "") ?: "") }
     var dsAuto by remember { mutableStateOf(prefs.getBoolean("ds_auto", true)) }
+    var aiUrl by remember { mutableStateOf(prefs.getString("ai_url", "") ?: "") }
+    var aiModel by remember { mutableStateOf(prefs.getString("ai_model", "") ?: "") }
     var dsTest by remember { mutableStateOf("") }
     var jamendoId by remember { mutableStateOf(prefs.getString("jamendo_id", "") ?: "") }
     var webSrc by remember { mutableStateOf(prefs.getBoolean("web_src", true)) }
@@ -241,6 +243,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capY by remember { mutableStateOf(prefs.getInt("cap_y", 8)) }
     var capS by remember { mutableStateOf(prefs.getInt("cap_size", 92)) }
     var capBand by remember { mutableStateOf(prefs.getBoolean("cap_band", true)) }
+    var capKey by remember { mutableStateOf(prefs.getBoolean("cap_key", true)) }
+    var capKeyS by remember { mutableStateOf(prefs.getInt("cap_key_s", 40)) }
+    var dimAuto by remember { mutableStateOf(prefs.getBoolean("dim_auto", false)) }
     var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 26)) }
     var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 23)) }
     var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 70)) }
@@ -248,6 +253,11 @@ fun SettingsScreen(onBack: () -> Unit) {
     var rootInfo by remember { mutableStateOf("") }
 
     fun putInt(k: String, v: Int) { prefs.edit().putInt(k, v).apply() }
+    fun setAi(url: String, model: String) {
+        aiUrl = url
+        aiModel = model
+        prefs.edit().putString("ai_url", url).putString("ai_model", model).apply()
+    }
     fun setWyn() {
         capX = 26; capY = 14; capS = 72; capRx = 26; capRy = 23; capRw = 70
         prefs.edit().putInt("cap_x", 26).putInt("cap_y", 14).putInt("cap_size", 72)
@@ -284,9 +294,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            CSection("Hình Wyn trên Android Auto (cần root)") {
+            CSection("Hình app tốc độ trên Android Auto (cần root)") {
                 Text(
-                    "Wyn được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên xe. " +
+                    "App tốc độ được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên xe. " +
                         "Khi ngắt kết nối, app đó sẽ bị đóng.",
                     fontSize = 12.sp, color = Dim
                 )
@@ -294,7 +304,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 CheckRow("Chụp cả khi chưa kết nối Android Auto (để xem trên màn hình khoá điện thoại)", capAlways) {
                     capAlways = it; prefs.edit().putBoolean("cap_always", it).apply()
                 }
-                CheckRow("Màn hình ảo riêng tư (giữ hình Wyn khi khoá máy, không hiện đồng hồ)", capPrivate) {
+                CheckRow("Màn hình ảo riêng tư (giữ hình app tốc độ khi khoá máy, không hiện đồng hồ)", capPrivate) {
                     capPrivate = it; prefs.edit().putBoolean("cap_private", it).apply()
                 }
                 Text("Đổi hai mục trên xong, bấm Dừng rồi Thử chụp (hoặc ngắt và nối lại Android Auto) để áp dụng.", fontSize = 11.sp, color = Dim)
@@ -308,7 +318,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             rootInfo = r.ifBlank { "Không có phản hồi (chưa cấp quyền root cho app?)" }
                         }
                     }
-                    SoftBtn("Mẫu Wyn") { setWyn() }
+                    SoftBtn("Mẫu mặc định") { setWyn() }
                 }
                 if (rootInfo.isNotEmpty()) Text(rootInfo, fontSize = 12.sp, color = AccentA)
 
@@ -331,6 +341,19 @@ fun SettingsScreen(onBack: () -> Unit) {
                     CropSlider("Trên", capY, 0, 100) { capY = it; putInt("cap_y", it) }
                     CropSlider("Cỡ", capS, 20, 100) { capS = it; putInt("cap_size", it) }
                 }
+                CheckRow("Nền trong suốt (xoá màu nền của app để hình rõ hơn trên xe)", capKey) {
+                    capKey = it; prefs.edit().putBoolean("cap_key", it).apply()
+                }
+                if (capKey) CropSlider("Độ nhạy", capKeyS, 10, 120) { capKeyS = it; putInt("cap_key_s", it) }
+                CheckRow("Tự bật màn hình đen khi bắt đầu chụp (giữ app tốc độ chạy khi không khoá máy)", dimAuto) {
+                    dimAuto = it; prefs.edit().putBoolean("dim_auto", it).apply()
+                }
+                SoftBtn("🌑 Bật màn hình đen ngay") { ctx.startActivity(Intent(ctx, DimActivity::class.java)) }
+                Text(
+                    "Khi khoá máy, nhiều app tốc độ ngừng cập nhật nên hình trên xe bị đứng. Màn hình đen giữ máy chưa khoá " +
+                        "nhưng tắt đèn nền; giữ lâu một chỗ trên màn hình để thoát.",
+                    fontSize = 11.sp, color = Dim
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GradBtn("Thử chụp") { ScreenCapture.start(ctx, capPkg, true) }
                     SoftBtn("Dừng") { ScreenCapture.manual = false; ScreenCapture.stop() }
@@ -361,15 +384,32 @@ fun SettingsScreen(onBack: () -> Unit) {
                 CheckRow("Tìm thêm trên Kugeci và Lyricsify khi chạy đề xuất trong Kiểm tra tag", webSrc) {
                     webSrc = it; prefs.edit().putBoolean("web_src", it).apply()
                 }
-                Text("DeepSeek: thêm phiên âm pinyin và bản dịch tiếng Việt cho lời tiếng Trung", fontSize = 12.sp, color = Dim)
+                Text("AI: thêm phiên âm pinyin, dịch lời tiếng Trung và dịch tên bài / ca sĩ sang tiếng Việt", fontSize = 12.sp, color = Dim)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    Pill("DeepSeek", aiUrl.isEmpty() || aiUrl.contains("deepseek")) { setAi("https://api.deepseek.com/chat/completions", "deepseek-chat") }
+                    Pill("Gemini (miễn phí có hạn mức)", aiUrl.contains("generativelanguage")) {
+                        setAi("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini-2.0-flash")
+                    }
+                    Pill("Groq (miễn phí có hạn mức)", aiUrl.contains("groq")) {
+                        setAi("https://api.groq.com/openai/v1/chat/completions", "llama-3.3-70b-versatile")
+                    }
+                }
+                OutlinedTextField(
+                    aiUrl, { aiUrl = it; prefs.edit().putString("ai_url", it.trim()).apply() },
+                    label = { Text("URL (tương thích OpenAI, để trống = DeepSeek)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    aiModel, { aiModel = it; prefs.edit().putString("ai_model", it.trim()).apply() },
+                    label = { Text("Model (để trống = deepseek-chat)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
                 OutlinedTextField(
                     dsKey, { dsKey = it; prefs.edit().putString("deepseek_key", it.trim()).apply() },
-                    label = { Text("DeepSeek API key") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                    label = { Text("API key") }, singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-                CheckRow("Tự gửi DeepSeek khi dán lời tiếng Trung", dsAuto) {
+                CheckRow("Tự gửi AI khi dán lời tiếng Trung", dsAuto) {
                     dsAuto = it; prefs.edit().putBoolean("ds_auto", it).apply()
                 }
-                SoftBtn("Kiểm tra DeepSeek key") {
+                SoftBtn("Kiểm tra AI") {
                     scope.launch {
                         dsTest = "Đang kiểm tra..."
                         val (r, m) = withContext(Dispatchers.IO) { DeepSeek.annotate("[00:01.00]你好，世界\n[00:03.00]我爱你") }
@@ -377,7 +417,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }
                 if (dsTest.isNotEmpty()) Text(dsTest, fontSize = 12.sp, color = AccentA)
-                Text("Lời bài hát được gửi tới máy chủ DeepSeek và tính phí theo tài khoản của bạn.", fontSize = 11.sp, color = Dim)
+                Text(
+                    "HTTP 402 nghĩa là tài khoản DeepSeek chưa có số dư (DeepSeek không tặng sẵn tiền): cần nạp tiền tại " +
+                        "platform.deepseek.com hoặc chọn Gemini / Groq miễn phí. Nội dung được gửi tới dịch vụ bạn chọn.",
+                    fontSize = 11.sp, color = Dim
+                )
 
                 Text("Nhạc online (Jamendo, nhạc Creative Commons)", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
                 OutlinedTextField(
@@ -556,6 +600,8 @@ fun TagEditor(s: Song) {
     var useNewCover by remember(s.id) { mutableStateOf(true) }
     var dsBusy by remember(s.id) { mutableStateOf(false) }
     var dsMsg by remember(s.id) { mutableStateOf("") }
+    var renameFile by remember(s.id) { mutableStateOf(true) }
+    var viNames by remember(s.id) { mutableStateOf(true) }
     var query by remember(s.id) {
         mutableStateOf(
             if (s.path.isNotEmpty()) LibraryCheck.guess(s.path).let { "${it.second} ${it.first}".trim() } else Engine.title(s)
@@ -616,11 +662,34 @@ fun TagEditor(s: Song) {
                                 cover = withContext(Dispatchers.IO) { Net.bytes(src) }
                                 if (cover == null) status = "Không tải được ảnh từ link, các phần khác vẫn được lưu."
                             }
+                            // Tên bài / ca sĩ tiếng Trung: tag ghi "Tiếng Việt (中文)", tên file chỉ dùng tiếng Việt
+                            var tTitle = title.trim()
+                            var tArtist = artist.trim()
+                            var fileTitle = Chinese.viPart(tTitle) ?: tTitle
+                            var fileArtist = Chinese.viPart(tArtist) ?: tArtist
+                            val needT = Chinese.viPart(tTitle) == null && tTitle.any { Chinese.isHan(it) }
+                            val needA = Chinese.viPart(tArtist) == null && tArtist.any { Chinese.isHan(it) }
+                            if (viNames && (needT || needA)) {
+                                status = "Đang dịch tên bài và ca sĩ sang tiếng Việt (AI)..."
+                                val (vi, msg) = withContext(Dispatchers.IO) { DeepSeek.translateNames(tTitle, tArtist) }
+                                if (vi != null) {
+                                    if (needT) { fileTitle = vi.first; tTitle = "${vi.first} ($title)" }
+                                    if (needA) { fileArtist = vi.second; tArtist = "${vi.second} ($artist)" }
+                                } else {
+                                    status = "Không dịch được tên ($msg), giữ nguyên tên gốc."
+                                }
+                            }
                             val err = withContext(Dispatchers.IO) {
-                                Engine.applyTags(s, title, artist, album, if (lyricsDirty) lyricsText else null, cover)
+                                Engine.applyTags(s, tTitle, tArtist, album, if (lyricsDirty) lyricsText else null, cover)
                             }
                             if (err == null) {
-                                Engine.editing = null
+                                var note = ""
+                                if (renameFile) {
+                                    val base = if (fileArtist.isBlank()) fileTitle else "$fileTitle - $fileArtist"
+                                    val e2 = withContext(Dispatchers.IO) { Engine.renameSongFile(s, base) }
+                                    if (e2 != null) note = " (chưa đổi tên file: $e2)"
+                                }
+                                if (note.isEmpty()) Engine.editing = null else status = "Đã ghi tag.$note"
                             } else {
                                 status = "Chưa ghi được vào file: $err. Đã lưu trong app."
                             }
@@ -648,6 +717,10 @@ fun TagEditor(s: Song) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(album, { album = it }, label = { Text("Album") }, singleLine = true, modifier = Modifier.weight(1f))
                         SoftBtn("📋") { clipText().takeIf { it.isNotBlank() }?.let { album = firstLine(it) } }
+                    }
+                    CheckRow("Đổi tên file thành \"Tên bài - Ca sĩ\" khi lưu", renameFile) { renameFile = it }
+                    if (title.any { Chinese.isHan(it) } || artist.any { Chinese.isHan(it) }) {
+                        CheckRow("Tên bài / ca sĩ tiếng Trung: ghi tiếng Việt kèm tiếng Trung trong ngoặc (dùng AI)", viNames) { viNames = it }
                     }
 
                     Text("Tìm thông tin, album, ảnh bìa", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
@@ -735,7 +808,7 @@ fun TagEditor(s: Song) {
                                 val key = Engine.prefs.getString("deepseek_key", "").orEmpty()
                                 if (Chinese.isChinese(t) && key.isNotBlank() && Engine.prefs.getBoolean("ds_auto", true) && !dsBusy) {
                                     dsBusy = true
-                                    dsMsg = "Lời tiếng Trung: đang gửi DeepSeek..."
+                                    dsMsg = "Lời tiếng Trung: đang gửi AI..."
                                     scope.launch {
                                         val (res, msg) = withContext(Dispatchers.IO) { DeepSeek.annotate(t) }
                                         if (res != null) { lyricsText = res; lyricsDirty = true }
@@ -746,16 +819,16 @@ fun TagEditor(s: Song) {
                                 }
                             }
                         }
-                        // Nút phiên âm + dịch (DeepSeek) nằm cuối hàng như trước
-                        GradBtn(if (dsBusy) "⏳ Đang gửi DeepSeek..." else "🈶 Phiên âm + dịch (DeepSeek)") {
+                        // Nút phiên âm + dịch (AI) nằm cuối hàng như trước
+                        GradBtn(if (dsBusy) "⏳ Đang gửi AI..." else "🈶 Phiên âm + dịch (AI)") {
                             if (!dsBusy) {
                                 if (lyricsText.isBlank()) {
                                     dsMsg = "Chưa có lời: hãy dán lời bài hát vào ô bên dưới trước."
                                     Toast.makeText(ctx, dsMsg, Toast.LENGTH_LONG).show()
                                 } else {
                                     dsBusy = true
-                                    dsMsg = "Đang gửi DeepSeek, có thể mất vài chục giây..."
-                                    Toast.makeText(ctx, "Đang gửi DeepSeek...", Toast.LENGTH_SHORT).show()
+                                    dsMsg = "Đang gửi AI, có thể mất vài chục giây..."
+                                    Toast.makeText(ctx, "Đang gửi AI...", Toast.LENGTH_SHORT).show()
                                     scope.launch {
                                         val (res, msg) = withContext(Dispatchers.IO) { DeepSeek.annotate(lyricsText) }
                                         if (res != null) {
@@ -994,7 +1067,7 @@ fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
             Text(s?.let { Engine.artist(it) } ?: "", color = Dim, fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 Pill("Lời bài hát", !showImage) { showImage = false }
-                Pill("Hình Wyn", showImage) { showImage = true }
+                Pill("Hình app", showImage) { showImage = true }
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) {
                 if (showImage) {
@@ -1002,7 +1075,7 @@ fun LockLyricsScreen(onClose: () -> Unit, onOpenApp: () -> Unit = {}) {
                     if (f != null) {
                         Image(bitmap = f.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                     } else {
-                        EmptyHint("Chưa có hình. Bật mục Hình Wyn trong Cài đặt, rồi kết nối Android Auto hoặc bật \"Chụp cả khi chưa kết nối\".")
+                        EmptyHint("Chưa có hình. Bật mục Hình app tốc độ trong Cài đặt, rồi kết nối Android Auto hoặc bật \"Chụp cả khi chưa kết nối\".")
                     }
                 } else {
                     LyricsView()

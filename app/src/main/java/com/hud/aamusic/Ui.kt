@@ -40,6 +40,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -554,7 +556,7 @@ fun Root() {
         }
     }
     Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(tint, Bg)))) {
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(tint, Bg))).systemBarsPadding()) {
             when (screen) {
                 0 -> NowPlayingScreen({ screen = 1 }, { screen = 2 }, { screen = 3 }, { screen = 4 })
                 1 -> LibraryScreen { screen = 0 }
@@ -1078,9 +1080,9 @@ fun LyricsView() {
         val vh = state.layoutInfo.viewportSize.height
         state.animateScrollToItem(idx, -(vh * 0.28f).toInt())
     }
-    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(), state = state,
+            Modifier.fillMaxSize(), state = state,
             contentPadding = PaddingValues(top = 8.dp, bottom = 240.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -1110,7 +1112,7 @@ fun LyricsView() {
                 }
             }
         }
-        LyricOffsetBar()
+        Box(Modifier.align(Alignment.BottomCenter)) { LyricOffsetBar() }
     }
 }
 
@@ -1125,15 +1127,15 @@ fun LyricOffsetBar() {
         else -> "Chậm %.1fs".format(-off / 1000f)
     }
     Column(
-        Modifier.fillMaxWidth().padding(top = 4.dp).clip(RoundedCornerShape(16.dp))
+        Modifier.widthIn(min = 150.dp).padding(bottom = 2.dp).clip(RoundedCornerShape(16.dp))
             .background(Color(0x99151922)).border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(16.dp))
             .padding(horizontal = 8.dp, vertical = 5.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 "⏱ $label", color = if (off == 0) Dim else AccentA, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f).pressable { expanded = !expanded }
+                modifier = Modifier.pressable { expanded = !expanded }.padding(horizontal = 4.dp)
             )
             OffsetChip(-500)
             OffsetChip(500)

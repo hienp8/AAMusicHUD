@@ -683,6 +683,65 @@ object Engine {
         }
     }
 
+    // ---------------- Đổi tên file theo "Tên bài - Ca sĩ" ----------------
+
+    /** Đổi tên file nhạc (giữ đuôi file). Cập nhật yêu thích, playlist, hàng đợi và thư viện. @return null nếu thành công. */
+    fun renameSongFile(s: Song, baseName: String): String? {
+        if (s.streaming || s.path.isEmpty()) return "Không đổi tên được bài này"
+        if (!Tags.canWrite()) return "Chưa cấp quyền Quản lý tất cả tệp"
+        val old = File(s.path)
+        val clean = baseName.replace(Regex("[\\\\/:*?\"<>|]"), "_").replace(Regex("\\s+"), " ").trim().trim('.').take(150)
+        if (clean.isEmpty()) return "Tên file trống"
+        val ext = old.extension
+        val dir = old.parentFile ?: return "Không thấy thư mục chứa file"
+        var target = File(dir, if (ext.isEmpty()) clean else "$clean.$ext")
+        if (target.path == old.path) return null
+        var n = 2
+        while (target.exists()) {
+            target = File(dir, if (ext.isEmpty()) "$clean ($n)" else "$clean ($n).$ext")
+            n++
+        }
+        if (current?.path == s.path) {
+            main.post { player.pause() }
+            Thread.sleep(200)
+        }
+        if (!old.renameTo(target)) return "Không đổi được tên file"
+        val newPath = target.path
+        main.post {
+            Lists.renamePath(old.path, newPath)
+            LibraryCheck.renamePath(old.path, newPath)
+            retargetQueue(old.path, newPath)
+        }
+        MediaScannerConnection.scanFile(app, arrayOf(old.path, newPath), null) { _, _ -> loadSongsAsync() }
+        return null
+    }
+
+    /** Trỏ các bài trong hàng đợi tới đường dẫn mới sau khi đổi tên file. */
+    private fun retargetQueue(oldPath: String, newPath: String) {
+        try {
+            val cur = player.currentMediaItemIndex
+            val pos = player.currentPosition
+            val was = player.playWhenReady
+            var changedCur = false
+            for (i in 0 until player.mediaItemCount) {
+                val mi = player.getMediaItemAt(i)
+                if (mi.localConfiguration?.uri?.path == oldPath) {
+                    player.replaceMediaItem(
+                        i,
+                        MediaItem.Builder().setUri(Uri.fromFile(File(newPath))).setMediaId(mi.mediaId)
+                            .setMediaMetadata(mi.mediaMetadata).build()
+                    )
+                    if (i == cur) changedCur = true
+                }
+            }
+            if (changedCur) {
+                player.seekTo(cur, pos)
+                player.playWhenReady = was
+            }
+        } catch (e: Exception) {
+        }
+    }
+
     // ---------------- Xoá bài ----------------
 
     /** Xoá file nhạc khỏi máy. @return null nếu thành công, ngược lại là thông báo lỗi. */
