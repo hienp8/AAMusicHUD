@@ -4,31 +4,37 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Chữ A (trắng) -->
+    <!-- Chữ A thứ nhất (trắng) -->
     <path
-        android:pathData="M24,78 L36,30 L48,78"
+        android:pathData="M24,80 L39,36 L54,80"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="7"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
     <path
-        android:pathData="M29,62 L43,62"
+        android:pathData="M31,64 L47,64"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="7"
+        android:strokeWidth="8"
         android:strokeLineCap="round" />
-    <!-- Nốt nhạc (cam) thay cho chữ A thứ hai: đầu nốt, cán nốt và móc nốt -->
+    <!-- Chữ A thứ hai (cam) -->
     <path
-        android:fillColor="#FFFF8A00"
-        android:pathData="M53.5,72 a8.5,6.5 -20 1,0 17,0 a8.5,6.5 -20 1,0 -17,0 z" />
-    <path
-        android:pathData="M69,70 L69,30"
+        android:pathData="M45,80 L60,36 L75,80"
         android:strokeColor="#FFFF8A00"
-        android:strokeWidth="5"
-        android:strokeLineCap="round" />
-    <path
-        android:pathData="M69,30 C69,44 83,45 83,60"
-        android:strokeColor="#FFFF8A00"
-        android:strokeWidth="5"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
+    <!-- Nốt nhạc nằm thay cho thanh ngang của chữ A thứ hai -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M50.5,68 a5.5,4.5 -20 1,0 11,0 a5.5,4.5 -20 1,0 -11,0 z" />
+    <path
+        android:pathData="M61,67.5 L61,50"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M61,50 C65,51 66,55 65,59"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
 </vector>
