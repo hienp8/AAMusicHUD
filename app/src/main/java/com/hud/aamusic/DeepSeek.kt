@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 /**
  * Gọi dịch vụ AI (DeepSeek mặc định; có thể đổi sang Gemini, Groq... qua URL và model trong Cài đặt)
@@ -109,7 +110,7 @@ object DeepSeek {
      * Dịch tên bài hát và ca sĩ tiếng Trung sang tiếng Việt (tên người theo âm Hán-Việt).
      * Gọi ngoài luồng chính. @return Pair(Pair(tên bài, ca sĩ) hoặc null, thông báo)
      */
-    fun translateNames(title: String, artist: String): Pair<Pair<String, String>?, String> {
+    private fun translateNamesAi(title: String, artist: String): Pair<Pair<String, String>?, String> {
         val sys = "Bạn là chuyên gia dịch tên bài hát và tên ca sĩ tiếng Trung sang tiếng Việt. " +
             "Tên người (ca sĩ) dịch theo âm Hán-Việt phổ biến (ví dụ 周杰伦 thành Châu Kiệt Luân, 邓紫棋 thành Đặng Tử Kỳ). " +
             "Tên bài hát dịch sang tiếng Việt tự nhiên (ưu tiên tên Hán-Việt hoặc tên Việt hoá quen thuộc nếu có). " +
@@ -121,7 +122,47 @@ object DeepSeek {
         val t = o.optString("title").trim()
         val a = o.optString("artist").trim()
         if (t.isEmpty() && a.isEmpty()) return Pair(null, "AI không trả về tên")
-        return Pair(Pair(t.ifEmpty { title }, a.ifEmpty { artist }), "ok")
+        return Pair(Pair(if (t.isEmpty()) title else Chinese.titleCase(t), if (a.isEmpty()) artist else Chinese.titleCase(a)), "ok")
+    }
+
+    /** Google dịch (điểm cuối công khai, không cần API key): dịch tiếng Trung sang tiếng Việt. null nếu lỗi. */
+    private fun googleTranslate(text: String): String? = try {
+        val u = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=zh-CN&tl=vi&dt=t&q=" +
+            URLEncoder.encode(text, "UTF-8")
+        val c = URL(u).openConnection() as HttpURLConnection
+        c.connectTimeout = 10000
+        c.readTimeout = 15000
+        c.setRequestProperty("User-Agent", "Mozilla/5.0")
+        if (c.responseCode !in 200..299) null else {
+            val segs = JSONArray(c.inputStream.bufferedReader().readText()).getJSONArray(0)
+            val sb = StringBuilder()
+            for (i in 0 until segs.length()) sb.append(segs.getJSONArray(i).optString(0))
+            sb.toString().trim().ifEmpty { null }
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Dịch tên bài và tên ca sĩ tiếng Trung sang tiếng Việt, viết hoa chữ đầu mỗi từ.
+     * Dùng AI nếu có API key (tên người theo âm Hán-Việt), lỗi hoặc không có key thì dùng Google dịch
+     * (hay dịch nghĩa hoặc phiên âm quốc tế cho tên người; có thể sửa tay trước khi lưu).
+     * Gọi ngoài luồng chính. @return Pair(Pair(tên bài, ca sĩ) hoặc null, thông báo)
+     */
+    fun translateNames(title: String, artist: String): Pair<Pair<String, String>?, String> {
+        val hasKey = Engine.prefs.getString("deepseek_key", "")?.isNotBlank() == true
+        var aiErr = ""
+        if (hasKey && !Engine.prefs.getBoolean("name_google_first", false)) {
+            val r = translateNamesAi(title, artist)
+            if (r.first != null) return r
+            aiErr = r.second
+        }
+        val t = if (Chinese.hasHan(title)) googleTranslate(title) else title
+        val a = if (Chinese.hasHan(artist)) googleTranslate(artist) else artist
+        if (t == null || a == null) {
+            return Pair(null, "Google dịch lỗi (kiểm tra mạng)" + (if (aiErr.isNotEmpty()) "; $aiErr" else ""))
+        }
+        return Pair(Pair(if (Chinese.hasHan(title)) Chinese.titleCase(t) else t, if (Chinese.hasHan(artist)) Chinese.titleCase(a) else a), "Google dịch")
     }
 
     /**

@@ -427,6 +427,8 @@ fun ScreenHeader(title: String, onBack: () -> Unit, trailing: @Composable RowSco
         Spacer(Modifier.width(16.dp))
         Text(title, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
         trailing()
+        Spacer(Modifier.width(10.dp))
+        LogoMark(40.dp)
     }
 }
 
@@ -591,7 +593,6 @@ fun RootBody() {
     Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(tint, Bg))).systemBarsPadding()) {
             Column(Modifier.fillMaxSize()) {
-                if (screen == 0) AppBar()
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (screen) {
                         0 -> NowPlayingScreen({ screen = 1 }, { hud = true })
@@ -698,7 +699,6 @@ fun LibraryScreen(onBack: () -> Unit) {
     )
 
     CollapsingScaffold(header = {
-        AppBar()
         ScreenHeader("Thư viện", onBack) {
             IconBtn("scan") { LibraryCheck.visible = true }
             Spacer(Modifier.width(10.dp))
@@ -872,7 +872,7 @@ fun GroupList(groups: Map<String, List<Song>>, onOpen: (String) -> Unit) {
                 Art(groups[k]?.firstOrNull(), Modifier.size(56.dp), 128, 14.dp)
                 Spacer(Modifier.width(14.dp))
                 Column {
-                    Text(k, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text(k, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, fontSize = 16.sp)
                     Text("${groups[k]?.size ?: 0} bài", color = Dim, fontSize = 12.sp)
                 }
             }
@@ -914,11 +914,11 @@ fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(
                 Engine.title(s), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = if (playing) AccentA else Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp
+                color = if (playing) AccentA else Color.White, fontWeight = FontWeight.Medium, fontSize = 17.sp
             )
             Text(
                 "${Engine.artist(s)} · ${Engine.album(s)}", maxLines = 1,
-                overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 13.sp
+                overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 14.sp
             )
         }
         val fav = Lists.isFav(s)
@@ -967,6 +967,7 @@ fun NowPlayingScreen(onLibrary: () -> Unit, onHud: () -> Unit) {
         Modifier.fillMaxSize().padding(start = 22.dp, end = 22.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) { LogoMark(38.dp) }
         if (s == null) {
             Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

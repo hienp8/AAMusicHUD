@@ -143,6 +143,13 @@ object LibraryCheck {
 
     // ---------------- Quét ----------------
 
+    /** Quét lại thư viện (tìm bài mới) rồi quét tag. */
+    fun scanFull() {
+        if (scanning || suggesting || applying) return
+        message = "Đang quét lại thư viện..."
+        Engine.refreshLibrary { scan() }
+    }
+
     fun scan() {
         if (scanning || suggesting || applying) return
         val list = Engine.songs.filter { !it.streaming && it.path.isNotEmpty() }
@@ -232,19 +239,34 @@ object LibraryCheck {
         val baseArtist = st.artist.ifBlank { gArtist }
         val needMeta = st.title.isBlank() || st.artist.isBlank() || st.album.isBlank() || !st.hasCover
 
+        // Tìm theo tên tiếng Trung nếu có (dễ ra kết quả hơn)
         var hit: Net.Track? = null
         if (needMeta && baseTitle.isNotBlank()) {
-            hit = Net.searchTracks("$baseTitle $baseArtist".trim()).firstOrNull { similar(it.title, baseTitle) }
+            val q = "${Chinese.zhPart(baseTitle)} ${Chinese.zhPart(baseArtist)}".trim()
+            hit = Net.searchTracks(q).firstOrNull { similar(it.title, Chinese.zhPart(baseTitle)) }
         }
-        val newTitle = if (st.title.isBlank()) (hit?.title ?: baseTitle.takeIf { it.isNotBlank() }) else null
-        val newArtist = if (st.artist.isBlank()) (hit?.artist ?: baseArtist.takeIf { it.isNotBlank() }) else null
+        var newTitle: String? = if (st.title.isBlank()) (hit?.title ?: baseTitle.takeIf { it.isNotBlank() }) else null
+        var newArtist: String? = if (st.artist.isBlank()) (hit?.artist ?: baseArtist.takeIf { it.isNotBlank() }) else null
         val newAlbum = if (st.album.isBlank()) hit?.album?.takeIf { it.isNotBlank() } else null
         val art = if (!st.hasCover) hit?.artUrl else null
 
+        // Tên tiếng Trung: đổi sang "Tên Việt (中文)" (viết hoa chữ đầu mỗi từ) nếu đã nhập API key AI
+        val nt = newTitle
+        val na = newArtist
+        val hanT = nt != null && Chinese.hasHan(nt) && Chinese.viPart(nt) == null
+        val hanA = na != null && Chinese.hasHan(na) && Chinese.viPart(na) == null
+        if (hanT || hanA) {
+            val (vi, _) = DeepSeek.translateNames(nt ?: "", na ?: "")
+            if (vi != null) {
+                if (hanT) newTitle = "${vi.first} ($nt)"
+                if (hanA) newArtist = "${vi.second} ($na)"
+            }
+        }
+
         var lyr: Net.Lyr? = null
         if (st.lyricKind != 2) {
-            val t = newTitle ?: baseTitle
-            val a = newArtist ?: baseArtist
+            val t = Chinese.zhPart(newTitle ?: baseTitle)
+            val a = Chinese.zhPart(newArtist ?: baseArtist)
             if (t.isNotBlank()) {
                 val r = Net.lyricsAll(t, a, newAlbum ?: st.album, song.durationMs / 1000)
                 if (r != null && (r.synced || st.lyricKind == 0)) lyr = r
@@ -258,6 +280,13 @@ object LibraryCheck {
         val song = Engine.pathMap()[p.path] ?: Engine.songById(p.songId) ?: return "Không tìm thấy bài hát"
         val cover = p.artUrl?.let { Net.bytes(it) }
         val err = Engine.applyTags(song, p.title, p.artist, p.album, p.lyrics?.text, cover)
+        if (err == null && Engine.prefs.getBoolean("rename_on_apply", true)) {
+            val t = p.title ?: Engine.title(song)
+            val a = (p.artist ?: Engine.artist(song)).let { if (it.startsWith("Không rõ")) "" else it }
+            val ft = Chinese.viPart(t) ?: t
+            val fa = Chinese.viPart(a) ?: a
+            if (ft.isNotBlank()) Engine.renameSongFile(song, if (fa.isBlank()) ft else "$ft - $fa")
+        }
         if (err == null) {
             main.post {
                 proposals.remove(p)

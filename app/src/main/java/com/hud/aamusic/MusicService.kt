@@ -163,6 +163,7 @@ class MusicService : MediaBrowserServiceCompat() {
 
     private fun onCarType(t: Int) {
         val now = t == CarConnection.CONNECTION_TYPE_PROJECTION
+        Engine.setCar(t != CarConnection.CONNECTION_TYPE_NOT_CONNECTED)
         Diag.aa = when (t) {
             CarConnection.CONNECTION_TYPE_PROJECTION -> "Android Auto: đã kết nối"
             CarConnection.CONNECTION_TYPE_NATIVE -> "Xe (Automotive): đã kết nối"

@@ -150,7 +150,6 @@ fun LabeledSlider(label: String, value: String, v: Float, min: Float, max: Float
 fun EqScreen(onBack: () -> Unit) {
     val info = Engine.eqInfo
     CollapsingScaffold(header = {
-        AppBar()
         ScreenHeader("Âm thanh", onBack) {
             Switch(checked = Engine.eqEnabled, onCheckedChange = { Engine.changeEq(it) })
         }
@@ -235,6 +234,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var aiUrl by remember { mutableStateOf(prefs.getString("ai_url", "") ?: "") }
     var aiModel by remember { mutableStateOf(prefs.getString("ai_model", "") ?: "") }
     var dsTest by remember { mutableStateOf("") }
+    var gFirst by remember { mutableStateOf(prefs.getBoolean("name_google_first", false)) }
     var jamendoId by remember { mutableStateOf(prefs.getString("jamendo_id", "") ?: "") }
     var webSrc by remember { mutableStateOf(prefs.getBoolean("web_src", true)) }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
@@ -252,6 +252,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capKeyS by remember { mutableStateOf(prefs.getInt("cap_key_s", 40)) }
     var dimAuto by remember { mutableStateOf(prefs.getBoolean("dim_auto", false)) }
     var keepOn by remember { mutableStateOf(prefs.getBoolean("keep_on_screen_off", true)) }
+    var fxOff by remember { mutableStateOf(prefs.getBoolean("fx_off_in_car", true)) }
+    var audioInfo by remember { mutableStateOf("") }
     var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 26)) }
     var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 23)) }
     var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 70)) }
@@ -277,7 +279,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    CollapsingScaffold(header = { AppBar(); ScreenHeader("Cài đặt", onBack) }) {
+    CollapsingScaffold(header = { ScreenHeader("Cài đặt", onBack) }) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -287,6 +289,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                     lockLyrics = it; prefs.edit().putBoolean("lock_lyrics", it).apply()
                 }
                 if (Diag.audio.isNotEmpty()) Text(Diag.audio, fontSize = 12.sp, color = AccentA)
+                CheckRow("Tắt hiệu ứng âm thanh (EQ, bass, âm trường) khi kết nối Android Auto để ra đủ các loa", fxOff) {
+                    fxOff = it; prefs.edit().putBoolean("fx_off_in_car", it).apply(); Engine.refreshFx()
+                }
+                SoftBtn("Kiểm tra âm thanh") { audioInfo = Engine.audioReport() }
+                if (audioInfo.isNotEmpty()) Text(audioInfo, fontSize = 11.sp, color = Dim)
                 Text("Nút phụ trên thông báo (ngoài ❤ ⏮ ⏯ ⏭, Android chỉ cho tối đa 5 nút):", fontSize = 12.sp, color = Dim)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Pill("🔀 Ngẫu nhiên", notifExtra == "shuffle") { notifExtra = "shuffle"; prefs.edit().putString("notif_extra", "shuffle").apply() }
@@ -414,6 +421,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                     dsKey, { dsKey = it; prefs.edit().putString("deepseek_key", it.trim()).apply() },
                     label = { Text("API key") }, singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
+                CheckRow("Dịch tên bài / ca sĩ bằng Google dịch (không cần API key, bỏ qua AI)", gFirst) {
+                    gFirst = it; prefs.edit().putBoolean("name_google_first", it).apply()
+                }
                 CheckRow("Tự gửi AI khi dán lời tiếng Trung", dsAuto) {
                     dsAuto = it; prefs.edit().putBoolean("ds_auto", it).apply()
                 }
@@ -493,6 +503,7 @@ fun ScanScreen() {
     val states = LibraryCheck.states
     val bad = states.filter { it.ok && it.missing().isNotEmpty() }
     var filter by remember { mutableStateOf("all") }
+    var renameApply by remember { mutableStateOf(Engine.prefs.getBoolean("rename_on_apply", true)) }
     val shown = when (filter) {
         "title" -> states.filter { it.ok && it.title.isBlank() }
         "artist" -> states.filter { it.ok && it.artist.isBlank() }
@@ -520,9 +531,12 @@ fun ScanScreen() {
             Spacer(Modifier.height(8.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            GradBtn(if (LibraryCheck.scanning) "Đang quét..." else "Quét thư viện") { LibraryCheck.scan() }
+            GradBtn(if (LibraryCheck.scanning) "Đang quét..." else "Quét thư viện") { LibraryCheck.scanFull() }
             SoftBtn("Tìm đề xuất (internet)") { LibraryCheck.suggestAll() }
             if (busy) SoftBtn("Dừng") { LibraryCheck.stop() }
+        }
+        CheckRow("Đổi tên file thành \"Tên bài - Ca sĩ\" khi áp dụng đề xuất (tiếng Trung: chỉ tên tiếng Việt)", renameApply) {
+            renameApply = it; Engine.prefs.edit().putBoolean("rename_on_apply", it).apply()
         }
         if (busy && LibraryCheck.total > 0) {
             val frac = (LibraryCheck.progress.toFloat() / LibraryCheck.total).coerceIn(0f, 1f)
@@ -619,11 +633,6 @@ fun TagEditor(s: Song) {
     var dsMsg by remember(s.id) { mutableStateOf("") }
     var renameFile by remember(s.id) { mutableStateOf(true) }
     var viNames by remember(s.id) { mutableStateOf(true) }
-    var query by remember(s.id) {
-        mutableStateOf(
-            if (s.path.isNotEmpty()) LibraryCheck.guess(s.path).let { "${it.second} ${it.first}".trim() } else Engine.title(s)
-        )
-    }
 
     LaunchedEffect(s.id) {
         val info = withContext(Dispatchers.IO) { if (s.path.isNotEmpty()) Tags.read(s.path) else null }
@@ -633,7 +642,6 @@ fun TagEditor(s: Song) {
             if (info.album.isNotBlank()) album = info.album
             lyricsText = info.lyrics
             hasCover = info.hasCover
-            if (info.title.isNotBlank()) query = "${info.title} ${info.artist}".trim()
         }
     }
 
@@ -654,6 +662,13 @@ fun TagEditor(s: Song) {
         } catch (e: Exception) {
             status = "Không mở được trình duyệt"
         }
+    }
+
+    /** Từ khoá tìm tự động: tên bài + ca sĩ; nếu là tiếng Trung thì dùng tên tiếng Trung (dễ ra kết quả hơn). */
+    fun searchQuery(): String {
+        val t = title.trim()
+        val a = artist.trim()
+        return if (Chinese.hasHan(t) || Chinese.hasHan(a)) "${Chinese.zhPart(t)} ${Chinese.zhPart(a)}".trim() else "$t $a".trim()
     }
 
     fun clipText(): String = clip.getText()?.text ?: ""
@@ -687,7 +702,7 @@ fun TagEditor(s: Song) {
                             val needT = Chinese.viPart(tTitle) == null && tTitle.any { Chinese.isHan(it) }
                             val needA = Chinese.viPart(tArtist) == null && tArtist.any { Chinese.isHan(it) }
                             if (viNames && (needT || needA)) {
-                                status = "Đang dịch tên bài và ca sĩ sang tiếng Việt (AI)..."
+                                status = "Đang dịch tên bài và ca sĩ sang tiếng Việt..."
                                 val (vi, msg) = withContext(Dispatchers.IO) { DeepSeek.translateNames(tTitle, tArtist) }
                                 if (vi != null) {
                                     if (needT) { fileTitle = vi.first; tTitle = "${vi.first} ($title)" }
@@ -737,19 +752,15 @@ fun TagEditor(s: Song) {
                     }
                     CheckRow("Đổi tên file thành \"Tên bài - Ca sĩ\" khi lưu", renameFile) { renameFile = it }
                     if (title.any { Chinese.isHan(it) } || artist.any { Chinese.isHan(it) }) {
-                        CheckRow("Tên bài / ca sĩ tiếng Trung: ghi tiếng Việt kèm tiếng Trung trong ngoặc (dùng AI)", viNames) { viNames = it }
+                        CheckRow("Tên bài / ca sĩ tiếng Trung: ghi tiếng Việt kèm tiếng Trung trong ngoặc (AI hoặc Google dịch)", viNames) { viNames = it }
                     }
 
                     Text("Tìm thông tin, album, ảnh bìa", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
-                    OutlinedTextField(
-                        query, { query = it }, label = { Text("Từ khoá tìm (sửa tay nếu không ra)") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth()
-                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         GradBtn("🔎 Tìm trên internet") {
                             scope.launch {
                                 status = "Đang tìm..."
-                                val q0 = query.trim()
+                                val q0 = searchQuery()
                                 val r = withContext(Dispatchers.IO) { Net.searchLoose(q0) }
                                 results = r
                                 val exact = r.any { LibraryCheck.similar(q0, it.title) }
@@ -760,8 +771,8 @@ fun TagEditor(s: Song) {
                                 }
                             }
                         }
-                        SoftBtn("🌐 Tìm thủ công") { openWeb(query.trim(), false) }
-                        SoftBtn("🌐 Tìm ảnh bìa") { openWeb(query.trim() + " album cover", true) }
+                        SoftBtn("🌐 Tìm thủ công") { openWeb(searchQuery(), false) }
+                        SoftBtn("🌐 Tìm ảnh bìa") { openWeb(searchQuery() + " album cover", true) }
                     }
                     results.take(12).forEach { t ->
                         Row(
@@ -770,6 +781,22 @@ fun TagEditor(s: Song) {
                                     title = t.title; artist = t.artist; album = t.album
                                     artUrl = t.artUrl; picked = null; artLink = ""; useNewCover = t.artUrl != null
                                     status = "Đã chọn. Xem ảnh bìa bên dưới, chọn dùng hay không rồi bấm Lưu vào file."
+                                    // Kết quả tiếng Trung: đổi sang "Tên Việt (中文)", viết hoa chữ đầu mỗi từ
+                                    val needT = Chinese.hasHan(t.title) && Chinese.viPart(t.title) == null
+                                    val needA = Chinese.hasHan(t.artist) && Chinese.viPart(t.artist) == null
+                                    if (viNames && (needT || needA)) {
+                                        status = "Đang đổi tên sang tiếng Việt..."
+                                        scope.launch {
+                                            val (vi, msg) = withContext(Dispatchers.IO) { DeepSeek.translateNames(t.title, t.artist) }
+                                            if (vi != null) {
+                                                if (needT) title = "${vi.first} (${t.title})"
+                                                if (needA) artist = "${vi.second} (${t.artist})"
+                                                status = "Đã chọn và đổi tên sang tiếng Việt. Kiểm tra rồi bấm Lưu vào file."
+                                            } else {
+                                                status = "Đã chọn. Không dịch được tên ($msg), giữ tên gốc."
+                                            }
+                                        }
+                                    }
                                 }.padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -816,7 +843,7 @@ fun TagEditor(s: Song) {
                         fontSize = 12.sp, color = Dim
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                        SoftBtn("🌐 Tìm lời trên web") { openWeb("${title.ifBlank { query }} $artist lời bài hát", false) }
+                        SoftBtn("🌐 Tìm lời trên web") { openWeb("${searchQuery()} lời bài hát", false) }
                         SoftBtn("📋 Dán lời") {
                             val t = clipText()
                             if (t.isNotBlank()) {
@@ -1129,7 +1156,6 @@ fun QueueScreen(onBack: () -> Unit) {
     val order = remember(ver, cur?.id, shuffle) { Engine.queueOrder() }
     val curIdx = remember(ver, cur?.id) { Engine.player.currentMediaItemIndex }
     CollapsingScaffold(header = {
-        AppBar()
         ScreenHeader("Hàng đợi (${q.size})", onBack) { SoftBtn("Xoá hết") { Engine.clearQueue() } }
         if (shuffle) {
             Text(
@@ -1155,7 +1181,7 @@ fun QueueScreen(onBack: () -> Unit) {
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                Engine.title(s), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 15.sp,
+                                Engine.title(s), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp,
                                 color = if (isCur) AccentA else Color.White, fontWeight = FontWeight.Medium
                             )
                             Text(Engine.artist(s), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp)

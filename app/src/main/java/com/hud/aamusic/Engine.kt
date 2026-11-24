@@ -258,7 +258,7 @@ object Engine {
     var libraryMsg by mutableStateOf("")
 
     /** Quét thêm bài mới trong các thư mục nhạc rồi nạp lại thư viện. */
-    fun refreshLibrary() {
+    fun refreshLibrary(onDone: (() -> Unit)? = null) {
         libraryMsg = "Đang làm mới thư viện..."
         thread {
             val known = allSongs.map { it.path }.toHashSet()
@@ -285,6 +285,7 @@ object Engine {
             val l = querySongs()
             main.post {
                 applySongs(l)
+                onDone?.invoke()
                 libraryMsg = if (found.isEmpty()) "Thư viện đã mới nhất (${l.size} bài)" else "Đã thêm ${found.size} bài, tổng ${l.size} bài"
             }
         }
@@ -981,14 +982,36 @@ object Engine {
 
     // ---------------- Equalizer 10 dải & Bass booster ----------------
 
+    var carActive by mutableStateOf(false)
+
+    /** Trên xe (Android Auto) mặc định không gắn hiệu ứng nào để âm thanh ra đủ các loa. */
+    private fun fxSuppressed() = carActive && prefs.getBoolean("fx_off_in_car", true)
+
+    fun refreshFx() = rebuildEffects()
+
+    fun setCar(on: Boolean) {
+        if (carActive == on) return
+        carActive = on
+        rebuildEffects()
+    }
+
+    private fun rebuildEffects() {
+        if (!::player.isInitialized) return
+        releaseEffects()
+        attachEffects(player.audioSessionId)
+        applyVolume()
+    }
+
     private fun attachEffects(session: Int) {
         if (session == C.AUDIO_SESSION_ID_UNSET) return
         if (session == attachedSession && (dp != null || eq != null)) return
         releaseEffects()
         attachedSession = session
+        val suppress = fxSuppressed()
+        // Chỉ tạo bộ chỉnh âm khi đang bật EQ hoặc có tiền khuếch đại; không gắn gì vào luồng âm thanh nếu không cần
+        val wantDp = !suppress && (eqEnabled || preamp != 0)
 
-        // Ưu tiên bộ chỉnh âm 10 dải thật của Android 9 trở lên
-        if (Build.VERSION.SDK_INT >= 28) {
+        if (wantDp && Build.VERSION.SDK_INT >= 28) {
             try {
                 val cfg = DynamicsProcessing.Config.Builder(
                     DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2, true, 10, false, 0, false, 0, true
@@ -997,13 +1020,13 @@ object Engine {
                 dp = d
                 applyDp()
                 applyLimiter()
-                d.setEnabled(eqEnabled)
+                d.setEnabled(eqEnabled || preamp != 0)
             } catch (t: Throwable) {
                 dp = null
             }
         }
         // Dự phòng: Equalizer hệ thống (thường chỉ có 5 dải, app ánh xạ 10 dải vào các dải gần nhất)
-        if (dp == null) {
+        if (wantDp && dp == null) {
             try {
                 val e = Equalizer(0, session)
                 eq = e
@@ -1013,31 +1036,55 @@ object Engine {
                 eq = null
             }
         }
-        try {
-            val b = BassBoost(0, session)
-            if (b.strengthSupported) b.setStrength(bassStrength.toShort())
-            b.setEnabled(bassStrength > 0)
-            bass = b
-        } catch (ex: Exception) {
-            bass = null
+        if (!suppress && bassStrength > 0) {
+            try {
+                val b = BassBoost(0, session)
+                if (b.strengthSupported) b.setStrength(bassStrength.toShort())
+                b.setEnabled(true)
+                bass = b
+            } catch (ex: Exception) {
+                bass = null
+            }
         }
-        try {
-            val v = Virtualizer(0, session)
-            if (v.strengthSupported) v.setStrength(virtStrength.toShort())
-            v.setEnabled(virtStrength > 0)
-            virt = v
-        } catch (ex: Throwable) {
-            virt = null
+        if (!suppress && virtStrength > 0) {
+            try {
+                val v = Virtualizer(0, session)
+                if (v.strengthSupported) v.setStrength(virtStrength.toShort())
+                v.setEnabled(true)
+                virt = v
+            } catch (ex: Throwable) {
+                virt = null
+            }
         }
-        try {
-            val l = LoudnessEnhancer(session)
-            l.setTargetGain(loudGain)
-            l.setEnabled(loudGain > 0)
-            loud = l
-        } catch (ex: Throwable) {
-            loud = null
+        if (!suppress && loudGain > 0) {
+            try {
+                val l = LoudnessEnhancer(session)
+                l.setTargetGain(loudGain)
+                l.setEnabled(true)
+                loud = l
+            } catch (ex: Throwable) {
+                loud = null
+            }
         }
         applyPreampFallback()
+    }
+
+    private fun devName(t: Int) = when (t) {
+        2 -> "loa máy"; 3, 4 -> "tai nghe"; 7 -> "Bluetooth SCO"; 8 -> "Bluetooth A2DP"
+        11 -> "USB"; 21 -> "bus (xe)"; 22 -> "USB tai nghe"; 25 -> "remote submix"; else -> "loại $t"
+    }
+
+    /** Báo cáo đầu ra âm thanh để kiểm tra khi âm thanh trên xe thiếu loa. */
+    fun audioReport(): String {
+        val f = try { player.audioFormat } catch (e: Throwable) { null }
+        val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val devs = try {
+            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).joinToString(", ") { devName(it.type) }
+        } catch (e: Throwable) { "?" }
+        return "Định dạng phát: " + (if (f != null) "${f.channelCount} kênh, ${f.sampleRate} Hz" else "chưa phát") +
+            "\nThiết bị ra: $devs" +
+            "\nHiệu ứng đang gắn: EQ/Preamp=${dp != null || eq != null}, Bass=${bass != null}, Âm trường=${virt != null}, Tăng âm=${loud != null}" +
+            "\nXe: ${if (carActive) "đang kết nối" else "không"}; tắt hiệu ứng khi ở trên xe: ${fxSuppressed()}"
     }
 
     private fun applyLimiter() {
@@ -1187,9 +1234,12 @@ object Engine {
 
     fun changeEq(on: Boolean) {
         eqEnabled = on
-        try { dp?.setEnabled(on) } catch (e: Throwable) { }
-        try { eq?.setEnabled(on) } catch (e: Throwable) { }
         prefs.edit().putBoolean("eq_on", on).apply()
+        if (on && dp == null && eq == null) rebuildEffects()
+        else {
+            try { dp?.setEnabled(on || preamp != 0) } catch (e: Throwable) { }
+            try { eq?.setEnabled(on) } catch (e: Throwable) { }
+        }
     }
 
     fun setBand(b: Int, level: Int) {
@@ -1209,30 +1259,31 @@ object Engine {
     fun changePreamp(v: Int) {
         preamp = v.coerceIn(-1200, 1200)
         prefs.edit().putInt("preamp", preamp).apply()
-        applyDp()
-        applyPreampFallback()
+        if (preamp != 0 && dp == null && eq == null) rebuildEffects()
+        else {
+            applyDp()
+            applyPreampFallback()
+        }
     }
 
     fun setVirtualizer(v: Int) {
         virtStrength = v.coerceIn(0, 1000)
-        try {
-            virt?.let {
-                it.setEnabled(virtStrength > 0)
-                if (it.strengthSupported) it.setStrength(virtStrength.toShort())
-            }
-        } catch (e: Throwable) { }
         prefs.edit().putInt("virt", virtStrength).apply()
+        if (virtStrength > 0 && virt == null) { rebuildEffects(); return }
+        try {
+            if (virtStrength == 0) { virt?.release(); virt = null }
+            else virt?.let { if (it.strengthSupported) it.setStrength(virtStrength.toShort()) }
+        } catch (e: Throwable) { }
     }
 
     fun setLoudness(v: Int) {
         loudGain = v.coerceIn(0, 1200)
-        try {
-            loud?.let {
-                it.setTargetGain(loudGain)
-                it.setEnabled(loudGain > 0)
-            }
-        } catch (e: Throwable) { }
         prefs.edit().putInt("loud", loudGain).apply()
+        if (loudGain > 0 && loud == null) { rebuildEffects(); return }
+        try {
+            if (loudGain == 0) { loud?.release(); loud = null }
+            else loud?.setTargetGain(loudGain)
+        } catch (e: Throwable) { }
     }
 
     fun setLimiter(on: Boolean) {
@@ -1243,13 +1294,12 @@ object Engine {
 
     fun setBass(v: Int) {
         bassStrength = v
-        try {
-            bass?.let {
-                it.setEnabled(v > 0)
-                if (it.strengthSupported) it.setStrength(v.toShort())
-            }
-        } catch (e: Exception) { }
         prefs.edit().putInt("bass", v).apply()
+        if (v > 0 && bass == null) { rebuildEffects(); return }
+        try {
+            if (v == 0) { bass?.release(); bass = null }
+            else bass?.let { if (it.strengthSupported) it.setStrength(v.toShort()) }
+        } catch (e: Exception) { }
     }
 
     /** Thoát hoàn toàn: dừng nhạc, dừng dịch vụ, đóng app và kết thúc tiến trình. */

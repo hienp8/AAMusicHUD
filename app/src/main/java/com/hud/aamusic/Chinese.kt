@@ -19,6 +19,19 @@ object Chinese {
         return if (vn.isNotEmpty() && vn.none { isHan(it) }) vn else null
     }
 
+    fun hasHan(s: String): Boolean = s.any { isHan(it) }
+
+    /** Viết hoa chữ cái đầu của mọi từ: "thất lý hương" -> "Thất Lý Hương". */
+    fun titleCase(s: String): String =
+        s.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
+
+    /** "Thất Lý Hương (七里香)" -> "七里香"; chuỗi khác giữ nguyên. Dùng để tìm kiếm theo tên tiếng Trung. */
+    fun zhPart(s: String): String {
+        if (viPart(s) == null) return s
+        val m = Regex("\\(([^)]*[\\u4e00-\\u9fff][^)]*)\\)\\s*$").find(s) ?: return s
+        return m.groupValues[1].trim()
+    }
+
     fun fmtTag(ms: Long): String {
         val m = ms / 60000
         val s = (ms / 1000) % 60
