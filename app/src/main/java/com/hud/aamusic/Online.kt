@@ -38,11 +38,17 @@ object Online {
     private fun JSONObject.str(k: String): String = if (isNull(k)) "" else optString(k, "")
 
     /** @return Pair(danh sách hoặc null, thông báo lỗi). Gọi ngoài luồng chính. */
-    fun search(q: String): Pair<List<OnlineTrack>?, String> {
+    fun search(q: String) = fetch("&search=" + URLEncoder.encode(q, "UTF-8"))
+
+    /** Bảng xếp hạng tuần (có thể lọc theo thể loại/tag). */
+    fun popular(tag: String? = null) =
+        fetch("&order=popularity_week" + (if (tag != null) "&tags=" + URLEncoder.encode(tag, "UTF-8") else ""))
+
+    fun fetch(extra: String): Pair<List<OnlineTrack>?, String> {
         val id = clientId()
         if (id.isEmpty()) return Pair(null, "Chưa nhập Jamendo Client ID (Cài đặt > Nâng cao)")
         val url = "https://api.jamendo.com/v3.0/tracks/?client_id=${URLEncoder.encode(id, "UTF-8")}&format=json&limit=30" +
-            "&audioformat=mp32&include=licenses&search=${URLEncoder.encode(q, "UTF-8")}"
+            "&audioformat=mp32&include=licenses$extra"
         return try {
             val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 10000

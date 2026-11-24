@@ -32,6 +32,9 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -277,7 +280,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            CSection("Android Auto, thông báo, màn hình khoá") {
+            CSection("Android Auto, thông báo, màn hình khoá", icon = "car") {
                 CheckRow("Hiện lời đồng bộ thay tên nghệ sĩ (Android Auto, thông báo, màn hình khoá)", lockLyrics) {
                     lockLyrics = it; prefs.edit().putBoolean("lock_lyrics", it).apply()
                 }
@@ -294,7 +297,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            CSection("Hình app tốc độ trên Android Auto (cần root)") {
+            CSection("Hình app tốc độ trên Android Auto (cần root)", icon = "phone") {
                 Text(
                     "App tốc độ được mở trên màn hình ảo, AA Music chụp lại giao diện rồi hiện thay ảnh bìa trên xe. " +
                         "Khi ngắt kết nối, app đó sẽ bị đóng.",
@@ -362,13 +365,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 CapPreview(capX, capY, capS, capBand, capRx, capRy, capRw)
             }
 
-            CSection("Radio online") {
+            CSection("Radio online", icon = "radio") {
                 Text("Mỗi dòng: Tên|URL", fontSize = 12.sp, color = Dim)
                 OutlinedTextField(value = streams, onValueChange = { streams = it }, minLines = 3, modifier = Modifier.fillMaxWidth())
                 SoftBtn("Lưu radio") { prefs.edit().putString("streams", streams).apply() }
             }
 
-            CSection("Nâng cao (quyền truy cập, lời bài hát)") {
+            CSection("Nâng cao (quyền truy cập, lời bài hát)", icon = "slidersh") {
                 Text("Quyền truy cập", fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     GradBtn("Cấp quyền nhạc, thông báo") { act?.requestPerms() }
@@ -428,6 +431,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     jamendoId, { jamendoId = it; prefs.edit().putString("jamendo_id", it.trim()).apply() },
                     label = { Text("Jamendo Client ID (miễn phí tại developer.jamendo.com)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            CSection("Giới thiệu ứng dụng (About)", icon = "info") {
+                Text("AA Music", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Trình nghe nhạc cho điện thoại và Android Auto: thư viện nhạc, lời đồng bộ, Equalizer 10 dải, " +
+                        "sửa tag, đổi tên file, hình app tốc độ làm ảnh bìa trên xe, nhạc Creative Commons từ Jamendo.",
+                    fontSize = 13.sp, color = Dim
                 )
             }
 
@@ -1191,55 +1203,191 @@ fun PickedImage(bytes: ByteArray, modifier: Modifier = Modifier) {
 // ------------------------------------------------------------------ Nhạc online (Jamendo)
 
 @Composable
+private fun SmallIconBtn(icon: String, onClick: () -> Unit) {
+    Box(
+        Modifier.size(46.dp).pressable(onClick).clip(RoundedCornerShape(14.dp)).background(Color(0xFF161B26))
+            .border(1.dp, Color(0xFF232A38), RoundedCornerShape(14.dp)),
+        contentAlignment = Alignment.Center
+    ) { Ic(icon, Color.White, 20.dp) }
+}
+
+@Composable
+private fun OnlineRow(n: Int, t: OnlineTrack, onPlay: () -> Unit, onQueue: () -> Unit, onDownload: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("$n", color = AccentA, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.width(34.dp))
+        RemoteImage(t.imageUrl, Modifier.size(58.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Row {
+                Text(t.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 13.sp, modifier = Modifier.weight(1f, fill = false))
+                Text("  ·  Jamendo", color = AccentB, fontSize = 13.sp, maxLines = 1)
+            }
+        }
+        Spacer(Modifier.width(6.dp))
+        SmallIconBtn("play", onPlay)
+        Spacer(Modifier.width(6.dp))
+        SmallIconBtn("listplus", onQueue)
+        if (t.downloadAllowed) {
+            Spacer(Modifier.width(6.dp))
+            SmallIconBtn("download", onDownload)
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(icon: String, text: String, action: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Ic(icon, AccentA, 22.dp)
+        Spacer(Modifier.width(10.dp))
+        Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, modifier = Modifier.weight(1f))
+        if (action != null) action()
+    }
+}
+
+@Composable
 fun OnlineTab() {
     val scope = rememberCoroutineScope()
+    val prefs = Engine.prefs
     var q by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<OnlineTrack>>(emptyList()) }
+    var chart by remember { mutableStateOf<List<OnlineTrack>>(emptyList()) }
+    var resTitle by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
+    var hist by remember { mutableStateOf((prefs.getString("online_hist", "") ?: "").split("\n").filter { it.isNotBlank() }) }
     var dlFor by remember { mutableStateOf<OnlineTrack?>(null) }
-    val hasKey = Engine.prefs.getString("jamendo_id", "").orEmpty().isNotBlank()
+    val hasKey = prefs.getString("jamendo_id", "").orEmpty().isNotBlank()
 
-    fun doSearch() {
-        if (q.isBlank()) return
-        msg = "Đang tìm..."
+    fun load(label: String, call: () -> Pair<List<OnlineTrack>?, String>) {
+        msg = "Đang tải..."
         scope.launch {
-            val (list, m) = withContext(Dispatchers.IO) { Online.search(q.trim()) }
+            val (list, m) = withContext(Dispatchers.IO) { call() }
             results = list ?: emptyList()
+            resTitle = label
             msg = m
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Text(
-            if (hasKey) "Nhạc Creative Commons từ Jamendo: nghe trực tiếp, tải về nếu tác giả cho phép."
-            else "Cần Jamendo Client ID (miễn phí tại developer.jamendo.com): nhập ở Cài đặt > Nâng cao.",
-            color = Dim, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-        )
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                q, { q = it }, singleLine = true, placeholder = { Text("Tìm bài hát, nghệ sĩ...", color = Dim) },
-                shape = RoundedCornerShape(26.dp), modifier = Modifier.weight(1f)
-            )
-            Spacer(Modifier.width(8.dp))
-            GradBtn("Tìm") { doSearch() }
+    fun doSearch(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        q = t
+        hist = (listOf(t) + hist.filter { it != t }).take(8)
+        prefs.edit().putString("online_hist", hist.joinToString("\n")).apply()
+        load("KẾT QUẢ CHO \"${t.uppercase()}\"") { Online.search(t) }
+    }
+
+    LaunchedEffect(hasKey) {
+        if (hasKey && chart.isEmpty()) {
+            val (l, m) = withContext(Dispatchers.IO) { Online.popular() }
+            if (l != null) chart = l else msg = m
         }
-        if (msg.isNotEmpty()) Text(msg, color = AccentA, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
-        ScrollList {
-            itemsIndexed(results) { i, t ->
+    }
+
+    fun playList(list: List<OnlineTrack>, i: Int) = Engine.playOnline(list.map { Online.toSong(it) }, i)
+    fun queue(t: OnlineTrack) {
+        val sg = Online.toSong(t)
+        Engine.registerOnline(sg)
+        Engine.addToQueue(sg)
+        msg = "Đã thêm vào hàng đợi: ${t.title}"
+    }
+
+    ScrollList(bottom = 12.dp) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    q, { q = it }, singleLine = true,
+                    placeholder = { Text("Tìm bài hát, nghệ sĩ trên Jamendo...", color = Dim, maxLines = 1) },
+                    leadingIcon = { Ic("search", Dim, 24.dp) },
+                    shape = RoundedCornerShape(28.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AccentA, unfocusedBorderColor = Color(0xFF2A3140),
+                        focusedContainerColor = Color(0xFF111620), unfocusedContainerColor = Color(0xFF111620)
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(10.dp))
+                GradBtn("Tìm", icon = "search") { doSearch(q) }
+            }
+        }
+        if (!hasKey) {
+            item {
+                Text(
+                    "Cần Jamendo Client ID (miễn phí tại developer.jamendo.com): nhập ở Cài đặt > Nâng cao.",
+                    color = AccentB, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+        }
+        item {
+            Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Pill("Tất cả", true) { }
+                Pill("Jamendo · nhạc Creative Commons", false) { }
+            }
+        }
+        if (hist.isNotEmpty()) {
+            item {
                 Row(
-                    Modifier.fillMaxWidth().clickable { Engine.playOnline(results.map { Online.toSong(it) }, i) }
-                        .padding(horizontal = 16.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    RemoteImage(t.imageUrl, Modifier.size(56.dp))
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                        Text("${t.artist} • ${t.album}", maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp)
+                    Ic("history", Dim, 22.dp)
+                    for (h in hist) {
+                        Box(
+                            Modifier.pressable { doSearch(h) }.clip(RoundedCornerShape(18.dp)).background(Color(0xFF111620))
+                                .border(1.dp, Color(0xFF2A3140), RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 9.dp)
+                        ) { Text(h, fontSize = 15.sp, color = Color(0xFFCFD3D8), maxLines = 1) }
                     }
-                    if (t.downloadAllowed) {
-                        Text("⬇", fontSize = 20.sp, modifier = Modifier.pressable { dlFor = t }.padding(10.dp))
+                    Text("Xoá", color = Dim, fontSize = 15.sp, modifier = Modifier.pressable {
+                        hist = emptyList(); prefs.edit().remove("online_hist").apply()
+                    }.padding(8.dp))
+                }
+            }
+        }
+        if (msg.isNotEmpty()) {
+            item { Text(msg, color = AccentA, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
+        }
+        if (results.isNotEmpty()) {
+            item {
+                SectionTitle("music", resTitle) {
+                    GradBtn("Phát tất cả", icon = "play") { playList(results, 0) }
+                }
+            }
+            itemsIndexed(results) { i, t ->
+                OnlineRow(i + 1, t, { playList(results, i) }, { queue(t) }, { dlFor = t })
+            }
+        } else {
+            item { SectionTitle("listmusic", "THỂ LOẠI GỢI Ý") }
+            item {
+                val genres = listOf(
+                    Triple("Pop", "pop", listOf(Color(0xFFB0426A), Color(0xFF3A1B33))),
+                    Triple("Rock", "rock", listOf(Color(0xFF8A3B1E), Color(0xFF2B1712))),
+                    Triple("Electronic", "electronic", listOf(Color(0xFF3B4C9B), Color(0xFF181F3F))),
+                    Triple("Chill", "chillout", listOf(Color(0xFF1F7A74), Color(0xFF10302F))),
+                    Triple("Jazz", "jazz", listOf(Color(0xFF8A6A1E), Color(0xFF2E2510))),
+                    Triple("Hip-hop", "hiphop", listOf(Color(0xFF6A2B9B), Color(0xFF241238))),
+                    Triple("Cổ điển", "classical", listOf(Color(0xFF4B5563), Color(0xFF1B2028)))
+                )
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    for ((name, tag, cols) in genres) {
+                        Box(
+                            Modifier.size(width = 150.dp, height = 96.dp).pressable { load("THỂ LOẠI: ${name.uppercase()}") { Online.popular(tag) } }
+                                .clip(RoundedCornerShape(22.dp)).background(Brush.linearGradient(cols))
+                                .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(22.dp)).padding(14.dp)
+                        ) {
+                            Text(name, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomStart))
+                            Box(Modifier.align(Alignment.TopEnd)) { Ic("music", Color(0xCCFFFFFF), 22.dp) }
+                        }
                     }
+                }
+            }
+            if (chart.isNotEmpty()) {
+                item {
+                    SectionTitle("flame", "BẢNG XẾP HẠNG TUẦN") {
+                        SoftBtn("Phát tất cả", icon = "play") { playList(chart, 0) }
+                    }
+                }
+                itemsIndexed(chart) { i, t ->
+                    OnlineRow(i + 1, t, { playList(chart, i) }, { queue(t) }, { dlFor = t })
                 }
             }
         }
@@ -1260,7 +1408,7 @@ fun OnlineTab() {
                             msg = "Đang tải ${d.title}..."
                             scope.launch(Dispatchers.IO) {
                                 val err = Online.download(d, fmt) { m -> msg = m }
-                                msg = err ?: "Đã tải xong: ${d.title}. Bấm 🔄 để làm mới thư viện nếu chưa thấy."
+                                msg = err ?: "Đã tải xong: ${d.title}. Bấm nút làm mới ở đầu màn hình nếu chưa thấy trong thư viện."
                             }
                         }
                     }

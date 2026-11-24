@@ -524,6 +524,7 @@ object Engine {
         for (x in list) onlineIndex[x.id] = x
         play(list, startIndex)
     }
+    fun registerOnline(x: Song) { onlineIndex[x.id] = x }
     fun toggleShuffle() { player.shuffleModeEnabled = !player.shuffleModeEnabled }
     fun cycleRepeat() {
         player.repeatMode = when (player.repeatMode) {
