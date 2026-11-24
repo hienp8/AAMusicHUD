@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,7 +19,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -129,7 +141,7 @@ fun Ic(name: String, color: Color, size: Dp = 22.dp, filled: Boolean = false, st
 
 /** Nút vuông bo góc, viền mảnh, biểu tượng màu cam (kiểu thanh công cụ của Amusic). */
 @Composable
-fun IconBtn(icon: String, size: Dp = 52.dp, tint: Color = AccentA, filled: Boolean = false, onClick: () -> Unit) {
+fun IconBtn(icon: String, size: Dp = 46.dp, tint: Color = AccentA, filled: Boolean = false, onClick: () -> Unit) {
     Box(
         Modifier.size(size).pressable(onClick).clip(RoundedCornerShape(16.dp)).background(Color(0xFF111620))
             .border(1.dp, Color(0xFF2A3140), RoundedCornerShape(16.dp)),
@@ -210,5 +222,38 @@ fun BottomNav(selected: Int, onSelect: (Int) -> Unit) {
                 }
             }
         }
+    }
+}
+
+
+/**
+ * Khung có phần đầu tự ẩn khi kéo danh sách xuống/lên: phần đầu thu lại khi cuộn, hiện lại khi cuộn ngược,
+ * để danh sách được mở rộng. Dùng cho mọi màn hình có danh sách hoặc nội dung cuộn.
+ */
+@Composable
+fun CollapsingScaffold(header: @Composable ColumnScope.() -> Unit, content: @Composable BoxScope.() -> Unit) {
+    var headerH by remember { mutableFloatStateOf(0f) }
+    var offset by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val conn = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val dy = available.y
+                if (dy != 0f) offset = (offset + dy).coerceIn(-headerH, 0f)
+                return Offset.Zero
+            }
+        }
+    }
+    Box(Modifier.fillMaxSize().nestedScroll(conn).clipToBounds()) {
+        val off = offset.coerceIn(-headerH, 0f)
+        Box(
+            Modifier.fillMaxSize().padding(top = with(density) { (headerH + off).coerceAtLeast(0f).toDp() }),
+            content = content
+        )
+        Column(
+            Modifier.fillMaxWidth().onSizeChanged { headerH = it.height.toFloat() }
+                .graphicsLayer { translationY = offset.coerceIn(-headerH, 0f) },
+            content = header
+        )
     }
 }

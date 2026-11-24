@@ -420,12 +420,12 @@ fun ScreenHeader(title: String, onBack: () -> Unit, trailing: @Composable RowSco
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(52.dp).pressable { onBack() }.clip(RoundedCornerShape(16.dp)).background(Color(0xFF111620))
+            Modifier.size(46.dp).pressable { onBack() }.clip(RoundedCornerShape(15.dp)).background(Color(0xFF111620))
                 .border(1.dp, Color(0xFF2A3140), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center
         ) { Ic("chevL", Color.White, 24.dp) }
         Spacer(Modifier.width(16.dp))
-        Text(title, fontSize = 32.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
         trailing()
     }
 }
@@ -469,7 +469,7 @@ fun ScrollList(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize(), state = state,
-            contentPadding = PaddingValues(top = 4.dp, bottom = bottom, end = if (showLetters) 56.dp else 28.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = bottom, end = if (showLetters) 24.dp else 16.dp),
             verticalArrangement = Arrangement.spacedBy(spacing),
             content = content
         )
@@ -495,9 +495,9 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
         scope.launch { state.scrollToItem(target.second) }
     }
 
-    // Thanh trượt nhanh: kéo hoặc chạm để nhảy tới vị trí
-    Box(
-        Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(28.dp)
+    // Thanh trượt nhanh: kéo hoặc chạm để nhảy tới vị trí (ẩn khi đã có hàng chữ cái)
+    if (letters.size < 3) Box(
+        Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(18.dp)
             .pointerInput(total) {
                 val h = size.height
                 detectVerticalDragGestures(onDragEnd = { bubble = null }, onDragCancel = { bubble = null }) { change, _ ->
@@ -518,9 +518,9 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
             val vis = state.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
             val frac = if (total - vis <= 0) 0f else (state.firstVisibleItemIndex.toFloat() / (total - vis)).coerceIn(0f, 1f)
             val th = 56.dp.toPx()
-            val tw = 5.dp.toPx()
+            val tw = 4.dp.toPx()
             drawRoundRect(
-                AccentA.copy(alpha = thumbAlpha), Offset(size.width - tw - 6.dp.toPx(), frac * (size.height - th)),
+                AccentA.copy(alpha = thumbAlpha), Offset(size.width - tw - 4.dp.toPx(), frac * (size.height - th)),
                 Size(tw, th), CornerRadius(tw / 2f, tw / 2f)
             )
         }
@@ -530,8 +530,8 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
     if (letters.size >= 3) {
         val avail = letters.map { it.first }.toSet()
         Column(
-            Modifier.align(Alignment.CenterEnd).padding(end = 28.dp).fillMaxHeight(0.82f).width(24.dp)
-                .clip(RoundedCornerShape(12.dp)).background(Color(0x66151922))
+            Modifier.align(Alignment.CenterEnd).padding(end = 2.dp).fillMaxHeight(0.8f).width(20.dp)
+                .clip(RoundedCornerShape(10.dp)).background(Color(0x33151922))
                 .pointerInput(letters) {
                     val h = size.height
                     detectTapGestures { off -> pick(off.y, h) }
@@ -546,7 +546,7 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
             verticalArrangement = Arrangement.SpaceEvenly,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            for (c in ALPHABET) Text(c.toString(), fontSize = 10.sp, color = if (c in avail) AccentA else Dim)
+            for (c in ALPHABET) Text(c.toString(), fontSize = 9.5.sp, color = if (c in avail) AccentA else Dim)
         }
     }
 
@@ -562,6 +562,16 @@ private fun BoxScope.FastScroller(state: LazyListState, letters: List<Pair<Char,
 
 @Composable
 fun Root() {
+    val dens = androidx.compose.ui.platform.LocalDensity.current
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(dens.density * 0.9f, minOf(dens.fontScale, 1f))
+    ) {
+        RootBody()
+    }
+}
+
+@Composable
+fun RootBody() {
     // 0 = Đang phát (mặc định), 1 = Thư viện, 2 = Âm thanh, 3 = Cài đặt, 4 = Hàng đợi
     var screen by remember { mutableIntStateOf(0) }
     var hud by remember { mutableStateOf(false) }
@@ -581,7 +591,7 @@ fun Root() {
     Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(tint, Bg))).systemBarsPadding()) {
             Column(Modifier.fillMaxSize()) {
-                AppBar()
+                if (screen == 0) AppBar()
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (screen) {
                         0 -> NowPlayingScreen({ screen = 1 }, { hud = true })
@@ -687,7 +697,8 @@ fun LibraryScreen(onBack: () -> Unit) {
         Triple(5, "Nghệ sĩ", "user"), Triple(6, "Radio", "radio")
     )
 
-    Column(Modifier.fillMaxSize()) {
+    CollapsingScaffold(header = {
+        AppBar()
         ScreenHeader("Thư viện", onBack) {
             IconBtn("scan") { LibraryCheck.visible = true }
             Spacer(Modifier.width(10.dp))
@@ -715,7 +726,9 @@ fun LibraryScreen(onBack: () -> Unit) {
         ) {
             for ((id, t, ic) in tabs) Pill(t, sub == id && filter == null, icon = ic) { sub = id; filter = null }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
+    }) {
+        Column(Modifier.fillMaxSize()) {
         val f = filter
         when {
             f != null && f.first == "playlist" -> {
@@ -757,6 +770,7 @@ fun LibraryScreen(onBack: () -> Unit) {
                 if (radio.isEmpty()) EmptyHint("Chưa có radio. Thêm ở Cài đặt (mỗi dòng: Tên|URL).")
                 else SongList(radio, false)
             }
+        }
         }
     }
 }
@@ -892,15 +906,15 @@ fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     val playing = Engine.current?.id == s.id
     Row(
-        Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 7.dp),
+        Modifier.fillMaxWidth().clickable { onClick() }.padding(start = 14.dp, end = 0.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Art(s, Modifier.size(56.dp), 128, 14.dp)
-        Spacer(Modifier.width(14.dp))
+        Art(s, Modifier.size(52.dp), 128, 13.dp)
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 Engine.title(s), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = if (playing) AccentA else Color.White, fontWeight = FontWeight.Medium
+                color = if (playing) AccentA else Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp
             )
             Text(
                 "${Engine.artist(s)} · ${Engine.album(s)}", maxLines = 1,
@@ -908,11 +922,11 @@ fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
             )
         }
         val fav = Lists.isFav(s)
-        Box(Modifier.pressable { Lists.toggleFav(s) }.padding(8.dp)) {
-            Ic("heart", if (fav) AccentB else Dim, 24.dp, filled = fav)
+        Box(Modifier.pressable { Lists.toggleFav(s) }.padding(horizontal = 5.dp, vertical = 8.dp)) {
+            Ic("heart", if (fav) AccentB else Dim, 22.dp, filled = fav)
         }
         Box {
-            Box(Modifier.pressable { menu = true }.padding(8.dp)) { Ic("more", Dim, 24.dp) }
+            Box(Modifier.pressable { menu = true }.padding(horizontal = 5.dp, vertical = 8.dp)) { Ic("more", Dim, 22.dp) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
                     text = { Text(if (Lists.isFav(s)) "♥ Bỏ yêu thích" else "♡ Thêm vào yêu thích") },
@@ -1031,11 +1045,11 @@ fun NowPlayingScreen(onLibrary: () -> Unit, onHud: () -> Unit) {
                 Row(
                     Modifier.pressable { onHud() }.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
                         .border(1.dp, Color(0xFF2A3140), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Ic("expand", Color.White, 20.dp)
-                    Text("HUD", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("HUD", fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
                 }
             }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1124,29 +1138,44 @@ fun HeaderChip(icon: String, text: String, active: Boolean, onClick: () -> Unit)
     }
 }
 
-/** Khung lời bài hát thay cho ảnh bìa: tiêu đề, nút Sửa đồng bộ, độ lệch hiện tại, mở rộng, đóng. */
+/** Khung lời bài hát thay cho ảnh bìa. "Sửa đồng bộ" = bấm đầu từng dòng để ghi thời gian; "±0.0s" = chỉnh độ lệch. */
 @Composable
-fun LyricsPanel(onClose: () -> Unit, onHud: () -> Unit) {
-    var syncOpen by remember { mutableStateOf(false) }
+fun LyricsPanel(onClose: () -> Unit, @Suppress("UNUSED_PARAMETER") onHud: () -> Unit) {
+    var offsetOpen by remember { mutableStateOf(false) }
     val off = Engine.lyricOffsetMs
+    val editing = Engine.syncEditing
     Column(
         Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)).background(Color(0xCC0A0D14))
             .border(1.dp, Color(0x2AFFFFFF), RoundedCornerShape(28.dp))
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 8.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Ic("lines", AccentA, 20.dp)
-            Text("Lời bài hát", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
-            HeaderChip("timer", "Sửa đồng bộ", syncOpen) { syncOpen = !syncOpen }
-            HeaderChip("clock", if (off == 0) "±0.0s" else "%+.1fs".format(off / 1000f), off != 0) { Engine.resetLyricOffset() }
-            Box(Modifier.pressable { onHud() }.padding(5.dp)) { Ic("expand", Dim, 20.dp) }
+            Text("Lời bài hát", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            Spacer(Modifier.weight(1f))
+            HeaderChip("timer", if (editing) "Đang sửa" else "Sửa đồng bộ", editing) {
+                if (editing) Engine.cancelSync() else { offsetOpen = false; Engine.startSync() }
+            }
+            if (!editing) {
+                HeaderChip("clock", if (off == 0) "±0.0s" else "%+.1fs".format(off / 1000f), offsetOpen || off != 0) { offsetOpen = !offsetOpen }
+            }
             Box(Modifier.pressable { onClose() }.padding(5.dp)) { Ic("x", Dim, 20.dp) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            Box(Modifier.fillMaxSize().padding(horizontal = 12.dp)) { LyricsView() }
-            if (syncOpen) Box(Modifier.align(Alignment.TopCenter).padding(top = 2.dp)) { SyncPanel() }
+            if (editing) {
+                SyncEditor()
+            } else {
+                Box(Modifier.fillMaxSize().padding(horizontal = 12.dp)) { LyricsView() }
+                if (offsetOpen) Box(Modifier.align(Alignment.TopCenter).padding(top = 2.dp)) { OffsetPanel() }
+                if (Engine.syncMsg.isNotEmpty()) {
+                    Text(
+                        Engine.syncMsg, color = AccentA, fontSize = 12.sp, textAlign = TextAlign.Center,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp)
+                            .clip(RoundedCornerShape(12.dp)).background(Color(0xCC000000)).padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -1212,9 +1241,11 @@ fun LyricsView() {
     }
 }
 
-/** Bảng chỉnh đồng bộ lời: nổi phía trên lời, chỉ hiện khi bấm "Sửa đồng bộ". */
+fun fmtLrc(ms: Long): String = "%02d:%02d.%02d".format(ms / 60000, (ms / 1000) % 60, (ms % 1000) / 10)
+
+/** Bảng chỉnh độ lệch thời gian lời: hiện khi bấm vào ±0.0s. */
 @Composable
-fun SyncPanel() {
+fun OffsetPanel() {
     val off = Engine.lyricOffsetMs
     Column(
         Modifier.padding(horizontal = 10.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xF2121722))
@@ -1233,6 +1264,60 @@ fun SyncPanel() {
         }
         if (Engine.lyricSaveMsg.isNotEmpty()) {
             Text(Engine.lyricSaveMsg, color = AccentA, fontSize = 11.sp, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+/** Sửa đồng bộ: phát bài, bấm vào đầu mỗi dòng đúng lúc bắt đầu hát, app ghi thời gian đang phát cho dòng đó. */
+@Composable
+fun SyncEditor() {
+    val rows = Engine.syncRows
+    val cursor = Engine.syncCursor
+    val state = rememberLazyListState()
+    var saving by remember { mutableStateOf(false) }
+    LaunchedEffect(cursor) {
+        if (cursor in rows.indices) state.animateScrollToItem((cursor - 1).coerceAtLeast(0))
+    }
+    val missing = rows.count { it.timeMs < 0 }
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SoftBtn(if (Engine.isPlaying) "Tạm dừng" else "Phát") { Engine.togglePlay() }
+            SoftBtn("Lùi 3s") { Engine.player.seekTo((Engine.player.currentPosition - 3000L).coerceAtLeast(0L)) }
+            SoftBtn("Hoàn tác") { Engine.undoSync() }
+            GradBtn(if (saving) "Đang lưu..." else "Lưu", icon = "download") {
+                if (!saving) { saving = true; Engine.saveSync { saving = false } }
+            }
+            SoftBtn("Huỷ") { Engine.cancelSync() }
+        }
+        Text(
+            if (missing > 0) "Phát bài và bấm vào đầu mỗi dòng đúng lúc bắt đầu hát. Còn $missing dòng chưa đánh dấu."
+            else "Đã đánh dấu đủ các dòng. Bấm Lưu để ghi vào file, hoặc bấm lại một dòng để đánh dấu lại.",
+            fontSize = 12.sp, color = Dim, modifier = Modifier.padding(vertical = 6.dp)
+        )
+        if (Engine.syncMsg.isNotEmpty()) Text(Engine.syncMsg, color = AccentA, fontSize = 12.sp)
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+            itemsIndexed(rows) { i, r ->
+                val isCur = i == cursor
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(14.dp))
+                        .then(
+                            if (isCur) Modifier.background(Color(0x33FF7A18)).border(1.dp, AccentA, RoundedCornerShape(14.dp))
+                            else Modifier.background(Color(0x14FFFFFF))
+                        )
+                        .clickable { Engine.stampRow(i) }.padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (r.timeMs >= 0) fmtLrc(r.timeMs) else "--:--.--",
+                        color = if (r.timeMs >= 0) AccentA else Dim, fontSize = 12.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, modifier = Modifier.width(68.dp)
+                    )
+                    Column {
+                        Text(r.text.ifEmpty { "♪" }, fontSize = 15.sp)
+                        for (x in r.extras) Text(x, fontSize = 12.sp, color = Dim)
+                    }
+                }
+            }
         }
     }
 }

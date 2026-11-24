@@ -882,6 +882,74 @@ object Engine {
 
     private fun lyricsFile(s: Song) = File(File(app.filesDir, "lyrics"), "${safe(s.id)}.lrc")
 
+    // ---------------- Sửa đồng bộ: bấm vào đầu dòng để ghi thời gian đang phát ----------------
+
+    val syncRows = mutableStateListOf<SyncRow>()
+    var syncEditing by mutableStateOf(false)
+    var syncCursor by mutableStateOf(0)
+    var syncMsg by mutableStateOf("")
+
+    fun startSync() {
+        val off = lyricOffsetMs
+        val rows = ArrayList<SyncRow>()
+        if (lyricLines.isNotEmpty()) {
+            for (l in lyricLines) rows += SyncRow(l.text, l.extras, (l.timeMs - off).coerceAtLeast(0L))
+        } else {
+            for (t in plainLyrics.lines()) if (t.isNotBlank()) rows += SyncRow(t.trim(), emptyList(), -1L)
+        }
+        if (rows.isEmpty()) {
+            syncMsg = "Chưa có lời để đồng bộ. Hãy dán lời trong mục Sửa thông tin."
+            return
+        }
+        if (off != 0) resetLyricOffset()   // độ lệch đã được cộng vào thời gian từng dòng
+        syncRows.clear()
+        syncRows.addAll(rows)
+        syncCursor = rows.indexOfFirst { it.timeMs < 0 }.let { if (it < 0) 0 else it }
+        syncMsg = ""
+        syncEditing = true
+    }
+
+    fun cancelSync() { syncEditing = false }
+
+    /** Gán thời gian đang phát (trừ ~0,1 giây phản xạ) cho dòng i rồi chuyển con trỏ sang dòng kế tiếp. */
+    fun stampRow(i: Int) {
+        if (i !in syncRows.indices) return
+        val pos = (player.currentPosition - 100L).coerceAtLeast(0L)
+        syncRows[i] = syncRows[i].copy(timeMs = pos)
+        syncCursor = if (i + 1 < syncRows.size) i + 1 else i
+    }
+
+    fun undoSync() {
+        if (syncRows.isEmpty()) return
+        val i = (syncCursor - 1).coerceAtLeast(0)
+        syncRows[i] = syncRows[i].copy(timeMs = -1L)
+        syncCursor = i
+    }
+
+    fun saveSync(onDone: () -> Unit) {
+        val s = current
+        val rows = syncRows.toList()
+        if (s == null || rows.any { it.timeMs < 0 }) {
+            syncMsg = "Còn dòng chưa đánh dấu thời gian"
+            onDone()
+            return
+        }
+        thread {
+            val sb = StringBuilder()
+            for (r in rows.sortedBy { it.timeMs }) {
+                val tag = Chinese.fmtTag(r.timeMs)
+                sb.append(tag).append(r.text).append('\n')
+                for (x in r.extras) sb.append(tag).append(x).append('\n')
+            }
+            val err = applyTags(s, title(s), artist(s), album(s), sb.toString().trimEnd(), null)
+            main.post {
+                syncMsg = if (err == null) "Đã lưu lời đồng bộ vào file" else "Chưa ghi vào file: $err. Đã lưu trong app."
+                syncEditing = false
+                onDone()
+            }
+        }
+    }
+
     fun saveLyrics(s: Song, text: String) {
         val f = lyricsFile(s)
         f.parentFile?.mkdirs()

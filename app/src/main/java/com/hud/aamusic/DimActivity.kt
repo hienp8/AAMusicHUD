@@ -10,6 +10,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,7 +43,17 @@ class DimActivity : ComponentActivity() {
             it.hide(WindowInsetsCompat.Type.systemBars())
             it.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+        val auto = intent.getBooleanExtra("auto", false)
         setContent {
+            // Chế độ tự động: thoát khi đã ngừng chụp (ngắt kết nối Android Auto...)
+            LaunchedEffect(Unit) {
+                if (auto) {
+                    while (true) {
+                        delay(2000)
+                        if (!ScreenCapture.running) { finish(); break }
+                    }
+                }
+            }
             Box(
                 Modifier.fillMaxSize().background(Color.Black)
                     .pointerInput(Unit) { detectTapGestures(onLongPress = { finish() }) },

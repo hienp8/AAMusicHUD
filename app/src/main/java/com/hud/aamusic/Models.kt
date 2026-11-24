@@ -122,3 +122,7 @@ object Lrc {
         return if (parse(text).isNotEmpty()) 2 else 1
     }
 }
+
+
+/** Một dòng lời đang được đồng bộ thủ công (timeMs < 0: chưa đánh dấu). */
+data class SyncRow(val text: String, val extras: List<String>, val timeMs: Long)

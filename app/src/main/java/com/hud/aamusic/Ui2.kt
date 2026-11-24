@@ -149,12 +149,14 @@ fun LabeledSlider(label: String, value: String, v: Float, min: Float, max: Float
 @Composable
 fun EqScreen(onBack: () -> Unit) {
     val info = Engine.eqInfo
-    Column(Modifier.fillMaxSize()) {
+    CollapsingScaffold(header = {
+        AppBar()
         ScreenHeader("Âm thanh", onBack) {
             Switch(checked = Engine.eqEnabled, onCheckedChange = { Engine.changeEq(it) })
         }
+    }) {
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Section("Equalizer 10 dải") {
@@ -249,6 +251,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capKey by remember { mutableStateOf(prefs.getBoolean("cap_key", true)) }
     var capKeyS by remember { mutableStateOf(prefs.getInt("cap_key_s", 40)) }
     var dimAuto by remember { mutableStateOf(prefs.getBoolean("dim_auto", false)) }
+    var keepOn by remember { mutableStateOf(prefs.getBoolean("keep_on_screen_off", true)) }
     var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 26)) }
     var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 23)) }
     var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 70)) }
@@ -274,10 +277,9 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Cài đặt", onBack)
+    CollapsingScaffold(header = { AppBar(); ScreenHeader("Cài đặt", onBack) }) {
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             CSection("Android Auto, thông báo, màn hình khoá", icon = "car") {
@@ -348,6 +350,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                     capKey = it; prefs.edit().putBoolean("cap_key", it).apply()
                 }
                 if (capKey) CropSlider("Độ nhạy", capKeyS, 10, 120) { capKeyS = it; putInt("cap_key_s", it) }
+                CheckRow("Khi tắt màn hình: tự bật lại ở chế độ đèn nền tắt để hình trên xe không bị đứng (máy vẫn khoá)", keepOn) {
+                    keepOn = it; prefs.edit().putBoolean("keep_on_screen_off", it).apply()
+                }
                 CheckRow("Tự bật màn hình đen khi bắt đầu chụp (giữ app tốc độ chạy khi không khoá máy)", dimAuto) {
                     dimAuto = it; prefs.edit().putBoolean("dim_auto", it).apply()
                 }
@@ -1123,7 +1128,8 @@ fun QueueScreen(onBack: () -> Unit) {
     val q = remember(ver, cur?.id) { Engine.queue() }
     val order = remember(ver, cur?.id, shuffle) { Engine.queueOrder() }
     val curIdx = remember(ver, cur?.id) { Engine.player.currentMediaItemIndex }
-    Column(Modifier.fillMaxSize()) {
+    CollapsingScaffold(header = {
+        AppBar()
         ScreenHeader("Hàng đợi (${q.size})", onBack) { SoftBtn("Xoá hết") { Engine.clearQueue() } }
         if (shuffle) {
             Text(
@@ -1131,33 +1137,34 @@ fun QueueScreen(onBack: () -> Unit) {
                 color = AccentA, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
             )
         }
+    }) {
         if (q.isEmpty()) {
             EmptyHint("Hàng đợi trống. Dùng menu ⋮ của bài để Phát tiếp theo hoặc Thêm vào hàng đợi.")
         } else {
-            ScrollList(bottom = 40.dp) {
+            ScrollList(bottom = 12.dp) {
                 itemsIndexed(order) { k, i ->
                     val s = q.getOrNull(i) ?: return@itemsIndexed
                     val isCur = i == curIdx
                     Row(
                         Modifier.fillMaxWidth().background(if (isCur) Color(0x22FF7A18) else Color.Transparent)
-                            .clickable { Engine.jumpTo(i) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                            .clickable { Engine.jumpTo(i) }.padding(start = 12.dp, end = 0.dp, top = 6.dp, bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("${k + 1}", color = Dim, fontSize = 12.sp, modifier = Modifier.width(30.dp))
+                        Text("${k + 1}", color = Dim, fontSize = 12.sp, modifier = Modifier.width(28.dp))
                         Art(s, Modifier.size(44.dp), 96, 10.dp)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                Engine.title(s), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                Engine.title(s), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 15.sp,
                                 color = if (isCur) AccentA else Color.White, fontWeight = FontWeight.Medium
                             )
                             Text(Engine.artist(s), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 12.sp)
                         }
                         if (!shuffle) {
-                            Text("▲", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i - 1) }.padding(10.dp))
-                            Text("▼", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i + 1) }.padding(10.dp))
+                            Text("▲", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i - 1) }.padding(horizontal = 7.dp, vertical = 10.dp))
+                            Text("▼", color = Dim, modifier = Modifier.pressable { Engine.moveInQueue(i, i + 1) }.padding(horizontal = 7.dp, vertical = 10.dp))
                         }
-                        Text("✕", color = AccentB, modifier = Modifier.pressable { Engine.removeFromQueue(i) }.padding(10.dp))
+                        Text("✕", color = AccentB, modifier = Modifier.pressable { Engine.removeFromQueue(i) }.padding(horizontal = 9.dp, vertical = 10.dp))
                     }
                 }
             }

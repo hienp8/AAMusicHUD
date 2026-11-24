@@ -157,7 +157,7 @@ object ScreenCapture {
             main.postDelayed(relaunchRunnable, 30000L)
         }
         // Tuỳ chọn: bật màn hình đen (giữ máy không khoá) để app tốc độ không bị dừng
-        if (Engine.prefs.getBoolean("dim_auto", false)) Root.run("am start -n ${ctx.packageName}/.DimActivity")
+        if (Engine.prefs.getBoolean("dim_auto", false)) Root.run("am start -n ${ctx.packageName}/.DimActivity --ez auto true")
         return null
     }
 
@@ -178,6 +178,13 @@ object ScreenCapture {
                 // Màn hình bật / tắt / mở khoá: mở lại app sau 1,5 giây
                 main.removeCallbacks(relaunchRunnable)
                 main.postDelayed(relaunchRunnable, 1500L)
+                // Tắt màn hình thì app trên màn hình ảo bị tạm dừng và hình đứng lại: bật màn hình lại ngay ở chế độ
+                // đèn nền tắt (máy vẫn khoá, chỉ không thật sự ngủ) để app tốc độ tiếp tục chạy.
+                if (i.action == Intent.ACTION_SCREEN_OFF && running && Engine.prefs.getBoolean("keep_on_screen_off", true)) {
+                    thread {
+                        Root.run("input keyevent 224; sleep 0.4; am start -n ${c.packageName}/.DimActivity --ez auto true")
+                    }
+                }
             }
         }
         val f = IntentFilter().apply {
