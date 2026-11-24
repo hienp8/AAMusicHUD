@@ -4,7 +4,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Chữ A thứ nhất (trắng) -->
+    <!-- Chữ A thứ nhất (trắng), thanh ngang ở độ cao y=64 -->
     <path
         android:pathData="M24,80 L39,36 L54,80"
         android:strokeColor="#FFFFFFFF"
@@ -23,17 +23,17 @@
         android:strokeWidth="8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
-    <!-- Nốt nhạc nằm thay cho thanh ngang của chữ A thứ hai -->
+    <!-- Nốt nhạc nằm đúng vị trí thanh ngang (y=64), chạm sát hai nét chéo của chữ A -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M50.5,68 a5.5,4.5 -20 1,0 11,0 a5.5,4.5 -20 1,0 -11,0 z" />
+        android:pathData="M50.5,64 a5.5,4.5 -20 1,0 11,0 a5.5,4.5 -20 1,0 -11,0 z" />
     <path
-        android:pathData="M61,67.5 L61,50"
+        android:pathData="M61,63.5 L61,48"
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="3.2"
         android:strokeLineCap="round" />
     <path
-        android:pathData="M61,50 C65,51 66,55 65,59"
+        android:pathData="M61,48 C65,49 66,53 65,57"
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="3.2"
         android:strokeLineCap="round" />
