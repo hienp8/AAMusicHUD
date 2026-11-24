@@ -49,6 +49,13 @@
             android:showWhenLocked="true"
             android:theme="@android:style/Theme.Material.NoActionBar" />
 
+        <activity
+            android:name=".DimActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
+
         <service
             android:name=".MusicService"
             android:exported="true"
