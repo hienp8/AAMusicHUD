@@ -180,13 +180,24 @@ object DeepSeek {
 
         val py = HashMap<Int, String>()
         val vi = HashMap<Int, String>()
+        var usedGoogle = false
         for (chunk in hanIdx.chunked(40)) {
             var res = callApi(chunk.map { src[it].second })
             if (res == null && lastError.startsWith("AI trả về")) {
                 Thread.sleep(1200)
                 res = callApi(chunk.map { src[it].second })
             }
-            if (res == null) return Pair(null, lastError)
+            if (res == null) {
+                // Dự phòng: Google dịch (phiên âm + dịch từng dòng)
+                val g = chunk.map {
+                    val r = Gt.both(src[it].second)
+                    Thread.sleep(80)
+                    r
+                }
+                if (g.all { it.first == null && it.second == null }) return Pair(null, lastError)
+                res = g.map { Pair(it.first.orEmpty(), it.second.orEmpty()) }
+                usedGoogle = true
+            }
             for ((k, i) in chunk.withIndex()) {
                 py[i] = res[k].first
                 vi[i] = res[k].second
@@ -206,6 +217,6 @@ object DeepSeek {
                 vi[i]?.takeIf { it.isNotBlank() }?.let { emit(it) }
             }
         }
-        return Pair(out.toString().trimEnd(), "Đã thêm phiên âm và bản dịch")
+        return Pair(out.toString().trimEnd(), if (usedGoogle) "Đã thêm phiên âm và bản dịch (Google dịch)" else "Đã thêm phiên âm và bản dịch")
     }
 }

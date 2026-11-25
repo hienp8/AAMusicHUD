@@ -80,6 +80,7 @@ class MusicService : MediaBrowserServiceCompat() {
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "cap_enabled", "cap_pkg", "cap_always" -> updateCapture()
+            "lyric_pinyin_ext" -> { lyricLine = ""; scheduleLyric(); pushMeta() }
             "lock_lyrics" -> { lyricLine = ""; scheduleLyric(); pushMeta() }
             "notif_extra" -> updateState()
         }
@@ -194,6 +195,30 @@ class MusicService : MediaBrowserServiceCompat() {
 
     // ---------- Lời bài hát đồng bộ (thay tên nghệ sĩ) ----------
 
+    private val pinyinCache = HashMap<String, String>()
+    private val pinyinPending = HashSet<String>()
+
+    /** Lời tiếng Trung trên Android Auto và thông báo: hiện pinyin thay cho chữ Hán (dùng dòng phiên âm có sẵn, nếu chưa có thì lấy từ Google dịch). */
+    private fun displayLine(l: LrcLine): String {
+        if (!Engine.prefs.getBoolean("lyric_pinyin_ext", true) || !Chinese.hasHan(l.text)) return l.text
+        l.extras.firstOrNull { !Chinese.hasHan(it) && !isVietnameseText(it) }?.let { if (it.isNotBlank()) return it }
+        pinyinCache[l.text]?.let { return it }
+        if (pinyinPending.add(l.text)) {
+            val txt = l.text
+            Thread {
+                val py = Gt.romanize(txt)
+                main.post {
+                    pinyinPending.remove(txt)
+                    if (!py.isNullOrBlank()) {
+                        pinyinCache[txt] = py
+                        scheduleLyric()
+                    }
+                }
+            }.start()
+        }
+        return l.text
+    }
+
     private fun scheduleLyric() {
         main.removeCallbacks(lyricRunnable)
         val lines = Engine.lyricLines
@@ -203,7 +228,7 @@ class MusicService : MediaBrowserServiceCompat() {
         }
         val pos = player.currentPosition + Engine.lyricOffsetMs
         val idx = lines.indexOfLast { it.timeMs <= pos + 150 }
-        val line = if (idx >= 0) lines[idx].text else ""
+        val line = if (idx >= 0) displayLine(lines[idx]) else ""
         if (line != lyricLine) {
             lyricLine = line
             pushMeta()

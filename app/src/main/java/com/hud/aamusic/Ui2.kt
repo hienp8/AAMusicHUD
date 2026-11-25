@@ -253,6 +253,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var dimAuto by remember { mutableStateOf(prefs.getBoolean("dim_auto", false)) }
     var keepOn by remember { mutableStateOf(prefs.getBoolean("keep_on_screen_off", true)) }
     var fxOff by remember { mutableStateOf(prefs.getBoolean("fx_off_in_car", true)) }
+    var pyExt by remember { mutableStateOf(prefs.getBoolean("lyric_pinyin_ext", true)) }
     var audioInfo by remember { mutableStateOf("") }
     var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 26)) }
     var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 23)) }
@@ -291,6 +292,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 if (Diag.audio.isNotEmpty()) Text(Diag.audio, fontSize = 12.sp, color = AccentA)
                 CheckRow("Tắt hiệu ứng âm thanh (EQ, bass, âm trường) khi kết nối Android Auto để ra đủ các loa", fxOff) {
                     fxOff = it; prefs.edit().putBoolean("fx_off_in_car", it).apply(); Engine.refreshFx()
+                }
+                CheckRow("Lời tiếng Trung trên Android Auto và thông báo: hiện pinyin thay cho chữ Hán", pyExt) {
+                    pyExt = it; prefs.edit().putBoolean("lyric_pinyin_ext", it).apply()
                 }
                 SoftBtn("Kiểm tra âm thanh") { audioInfo = Engine.audioReport() }
                 if (audioInfo.isNotEmpty()) Text(audioInfo, fontSize = 11.sp, color = Dim)
@@ -633,6 +637,7 @@ fun TagEditor(s: Song) {
     var dsMsg by remember(s.id) { mutableStateOf("") }
     var renameFile by remember(s.id) { mutableStateOf(true) }
     var viNames by remember(s.id) { mutableStateOf(true) }
+    var syncOpen by remember(s.id) { mutableStateOf(false) }
 
     LaunchedEffect(s.id) {
         val info = withContext(Dispatchers.IO) { if (s.path.isNotEmpty()) Tags.read(s.path) else null }
@@ -728,7 +733,18 @@ fun TagEditor(s: Song) {
                         }
                     }
                 }
-                Column(
+                if (syncOpen) Box(Modifier.weight(1f)) {
+                    LyricSyncPanel(
+                        s, lyricsText,
+                        onApply = { t ->
+                            lyricsText = t
+                            lyricsDirty = true
+                            syncOpen = false
+                            status = "Đã áp dụng lời đồng bộ. Bấm Lưu vào file để ghi."
+                        },
+                        onClose = { syncOpen = false }
+                    )
+                } else Column(
                     Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -771,10 +787,22 @@ fun TagEditor(s: Song) {
                                 }
                             }
                         }
+                        GradBtn("✨ Đề xuất (tên tiếng Trung)") {
+                            scope.launch {
+                                status = "Đang tìm các bài của ca sĩ bằng tên tiếng Trung..."
+                                val guessA = if (s.path.isNotEmpty()) LibraryCheck.guess(s.path).first else ""
+                                val guessT = if (s.path.isNotEmpty()) LibraryCheck.guess(s.path).second else ""
+                                val aq = Chinese.zhPart(artist.trim()).ifBlank { guessA }
+                                val tq = Chinese.zhPart(title.trim()).ifBlank { guessT }
+                                val (list, msg) = withContext(Dispatchers.IO) { Net.suggestChinese(aq, tq) }
+                                results = list
+                                status = msg
+                            }
+                        }
                         SoftBtn("🌐 Tìm thủ công") { openWeb(searchQuery(), false) }
                         SoftBtn("🌐 Tìm ảnh bìa") { openWeb(searchQuery() + " album cover", true) }
                     }
-                    results.take(12).forEach { t ->
+                    results.take(40).forEach { t ->
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Card2)
                                 .clickable {
@@ -861,6 +889,14 @@ fun TagEditor(s: Song) {
                                         Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                                     }
                                 }
+                            }
+                        }
+                        SoftBtn("⏱ Sửa đồng bộ") {
+                            if (lyricsText.isBlank()) {
+                                dsMsg = "Chưa có lời: hãy dán lời bài hát vào ô bên dưới trước."
+                                Toast.makeText(ctx, dsMsg, Toast.LENGTH_LONG).show()
+                            } else {
+                                syncOpen = true
                             }
                         }
                         // Nút phiên âm + dịch (AI) nằm cuối hàng như trước

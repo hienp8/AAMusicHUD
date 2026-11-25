@@ -71,6 +71,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -1341,3 +1342,104 @@ fun OffsetChip(delta: Int) {
 /** Dòng tiếng Việt có ít nhất một chữ cái chỉ có trong tiếng Việt (để phân biệt với phiên âm pinyin). */
 fun isVietnameseText(s: String): Boolean =
     s.any { it in "ăâđêôơưĂÂĐÊÔƠƯạảãấầẩẫậắằẳẵặẹẻẽếềểễệỉĩịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ" }
+
+fun parseSyncRows(text: String): List<SyncRow> {
+    val parsed = Lrc.parse(text)
+    if (parsed.isNotEmpty()) return parsed.map { SyncRow(it.text, it.extras, it.timeMs) }
+    return text.lines().map { it.trim() }.filter { it.isNotEmpty() }.map { SyncRow(it, emptyList(), -1L) }
+}
+
+/**
+ * Sửa đồng bộ ngay trong trình sửa tag: có nút Phát (phát chính bài đang sửa), bấm vào đầu mỗi dòng đúng lúc
+ * bắt đầu hát để ghi thời gian đang phát. "Xong" trả lại lời dạng LRC để ghi vào ô lời, rồi bấm Lưu vào file.
+ */
+@Composable
+fun LyricSyncPanel(song: Song, initial: String, onApply: (String) -> Unit, onClose: () -> Unit) {
+    val rows = remember { mutableStateListOf<SyncRow>().also { l -> l.addAll(parseSyncRows(initial)) } }
+    var cursor by remember { mutableStateOf(rows.indexOfFirst { it.timeMs < 0 }.let { if (it < 0) 0 else it }) }
+    var msg by remember { mutableStateOf("") }
+    val state = rememberLazyListState()
+    LaunchedEffect(Unit) {
+        while (true) {
+            Engine.tick()
+            delay(200)
+        }
+    }
+    val isThis = Engine.current?.id == song.id
+    LaunchedEffect(cursor) {
+        if (cursor in rows.indices) state.animateScrollToItem((cursor - 1).coerceAtLeast(0))
+    }
+    val missing = rows.count { it.timeMs < 0 }
+    val playingThis = isThis && Engine.isPlaying
+
+    fun stamp(i: Int) {
+        if (!isThis) { msg = "Bấm Phát trước để nghe bài này, rồi bấm vào đầu dòng."; return }
+        rows[i] = rows[i].copy(timeMs = (Engine.player.currentPosition - 100L).coerceAtLeast(0L))
+        cursor = if (i + 1 < rows.size) i + 1 else i
+        msg = ""
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
+        ) {
+            GradBtn(if (playingThis) "Tạm dừng" else "Phát", icon = if (playingThis) null else "play") {
+                if (!isThis) Engine.play(listOf(song), 0) else Engine.togglePlay()
+            }
+            SoftBtn("Lùi 3s") { if (isThis) Engine.player.seekTo((Engine.player.currentPosition - 3000L).coerceAtLeast(0L)) }
+            SoftBtn("Hoàn tác") {
+                if (rows.isNotEmpty()) {
+                    val i = (cursor - 1).coerceAtLeast(0)
+                    rows[i] = rows[i].copy(timeMs = -1L)
+                    cursor = i
+                }
+            }
+            GradBtn("Xong", icon = "download") {
+                if (missing > 0) {
+                    msg = "Còn $missing dòng chưa đánh dấu thời gian."
+                } else {
+                    val sb = StringBuilder()
+                    for (r in rows.sortedBy { it.timeMs }) {
+                        val tag = Chinese.fmtTag(r.timeMs)
+                        sb.append(tag).append(r.text).append('\n')
+                        for (x in r.extras) sb.append(tag).append(x).append('\n')
+                    }
+                    onApply(sb.toString().trimEnd())
+                }
+            }
+            SoftBtn("Huỷ") { onClose() }
+        }
+        Text(
+            (if (isThis) "Đang phát ${fmtLrc(Engine.positionMs)}. " else "Bấm Phát để nghe bài này. ") +
+                (if (missing > 0) "Bấm vào đầu mỗi dòng đúng lúc bắt đầu hát (còn $missing dòng chưa đánh dấu)."
+                else "Đã đủ mốc thời gian. Bấm Xong để dùng, hoặc bấm lại một dòng để đánh dấu lại."),
+            fontSize = 12.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp)
+        )
+        if (msg.isNotEmpty()) Text(msg, color = AccentB, fontSize = 12.sp)
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+            itemsIndexed(rows) { i, r ->
+                val isCur = i == cursor
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(14.dp))
+                        .then(
+                            if (isCur) Modifier.background(Color(0x33FF7A18)).border(1.dp, AccentA, RoundedCornerShape(14.dp))
+                            else Modifier.background(Color(0x14FFFFFF))
+                        )
+                        .clickable { stamp(i) }.padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (r.timeMs >= 0) fmtLrc(r.timeMs) else "--:--.--",
+                        color = if (r.timeMs >= 0) AccentA else Dim, fontSize = 12.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, modifier = Modifier.width(68.dp)
+                    )
+                    Column {
+                        Text(r.text.ifEmpty { "♪" }, fontSize = 15.sp)
+                        for (x in r.extras) Text(x, fontSize = 12.sp, color = Dim)
+                    }
+                }
+            }
+        }
+    }
+}

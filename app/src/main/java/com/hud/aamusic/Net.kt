@@ -105,6 +105,125 @@ object Net {
         return out.sortedByDescending { score(it) }.take(12)
     }
 
+    // ---------------- Đề xuất bài hát tiếng Trung theo ca sĩ ----------------
+
+    private fun itunesArtists(term: String, country: String): List<Pair<Long, String>> {
+        val t = text("https://itunes.apple.com/search?term=${enc(term)}&media=music&entity=musicArtist&limit=8&country=$country")
+            ?: return emptyList()
+        return try {
+            val arr = JSONObject(t).optJSONArray("results") ?: return emptyList()
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.getJSONObject(i)
+                val id = o.optLong("artistId", 0L)
+                val n = o.str("artistName")
+                if (id != 0L && Chinese.hasHan(n)) id to n else null
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun itunesArtistsFromSongs(term: String, country: String): List<Pair<Long, String>> {
+        val t = text("https://itunes.apple.com/search?term=${enc(term)}&media=music&entity=song&limit=15&country=$country")
+            ?: return emptyList()
+        return try {
+            val arr = JSONObject(t).optJSONArray("results") ?: return emptyList()
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.getJSONObject(i)
+                val id = o.optLong("artistId", 0L)
+                val n = o.str("artistName")
+                if (id != 0L && Chinese.hasHan(n)) id to n else null
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun artistSongs(id: Long): List<Track> {
+        val t = text("https://itunes.apple.com/lookup?id=$id&entity=song&limit=60&country=cn") ?: return emptyList()
+        return try {
+            val arr = JSONObject(t).optJSONArray("results") ?: return emptyList()
+            val out = ArrayList<Track>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                if (o.str("wrapperType") != "track") continue
+                val art = o.str("artworkUrl100").ifEmpty { null }?.replace("100x100bb", "600x600bb")
+                out += Track(o.str("trackName"), o.str("artistName"), o.str("collectionName"), art, o.str("artworkUrl100").ifEmpty { null })
+            }
+            out
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun normPy(x: String) = fold(x).lowercase().filter { it.isLetterOrDigit() }
+
+    private fun sim(a: String, b: String): Double {
+        if (a.isEmpty() || b.isEmpty()) return 0.0
+        if (a == b) return 1.0
+        if (a.contains(b) || b.contains(a)) return 0.9
+        val dp = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            var prev = dp[0]
+            dp[0] = i
+            for (j in 1..b.length) {
+                val tmp = dp[j]
+                dp[j] = minOf(dp[j] + 1, dp[j - 1] + 1, prev + if (a[i - 1] == b[j - 1]) 0 else 1)
+                prev = tmp
+            }
+        }
+        return 1.0 - dp[b.length].toDouble() / maxOf(a.length, b.length)
+    }
+
+    /**
+     * Từ tên ca sĩ (pinyin / Việt / Anh / Trung) tìm ca sĩ có tên tiếng Trung rồi liệt kê các bài của họ,
+     * xếp lên đầu những bài có tên giống [titleHint] (so theo pinyin). Gọi ngoài luồng chính.
+     */
+    fun suggestChinese(artistQuery: String, titleHint: String): Pair<List<Track>, String> {
+        val aq = artistQuery.trim()
+        val th = titleHint.trim()
+        if (aq.isEmpty() && th.isEmpty()) return Pair(emptyList(), "Chưa có tên ca sĩ hoặc tên bài để đề xuất")
+        val artists = LinkedHashMap<Long, String>()
+        val terms = LinkedHashSet<String>()
+        if (aq.isNotEmpty()) {
+            terms += aq
+            terms += fold(aq)
+        }
+        for (country in listOf("cn", "tw", "hk")) {
+            for (term in terms) for ((id, n) in itunesArtists(term, country)) artists.putIfAbsent(id, n)
+            if (artists.size >= 3) break
+        }
+        if (artists.isEmpty()) {
+            val comb = "$aq $th".trim()
+            for (country in listOf("cn", "tw")) for ((id, n) in itunesArtistsFromSongs(comb, country)) artists.putIfAbsent(id, n)
+        }
+        if (artists.isEmpty()) return Pair(emptyList(), "Không tìm được ca sĩ có tên tiếng Trung từ \"$aq\"")
+        val songs = ArrayList<Track>()
+        val seen = HashSet<String>()
+        for ((id, _) in artists.entries.take(3)) for (t in artistSongs(id)) if (seen.add(t.title + "|" + t.artist)) songs += t
+        if (songs.isEmpty()) return Pair(emptyList(), "Ca sĩ ${artists.values.first()} chưa có bài nào trong kho tìm kiếm")
+
+        // Xếp theo độ giống tên bài hiện tại
+        val scores = HashMap<Track, Double>()
+        if (th.isNotEmpty()) {
+            if (Chinese.hasHan(th)) {
+                for (t in songs) scores[t] = if (t.title == th) 1.0 else if (t.title.contains(th)) 0.9 else 0.0
+            } else {
+                val hint = normPy(th.replace(Regex("\\(.*\\)"), ""))
+                for (t in songs.take(40)) {
+                    val py = Gt.romanize(t.title)
+                    scores[t] = if (py == null) 0.0 else sim(hint, normPy(py))
+                    Thread.sleep(60)
+                }
+            }
+        }
+        val sorted = songs.withIndex().sortedWith(compareByDescending<IndexedValue<Track>> { scores[it.value] ?: 0.0 }.thenBy { it.index }).map { it.value }
+        val best = scores.values.maxOrNull() ?: 0.0
+        val msg = "Đề xuất theo ca sĩ ${artists.values.first()}: ${songs.size} bài" +
+            (if (best >= 0.6) ", bài giống nhất đã xếp lên đầu. Chọn một bài bên dưới:" else ". Chọn bài đúng bên dưới:")
+        return Pair(sorted, msg)
+    }
+
     /** LRCLIB trước; nếu không có lời đồng bộ thì thử thêm Kugeci và Lyricsify (nếu bật trong Cài đặt). */
     fun lyricsAll(title: String, artist: String, album: String, durationSec: Long): Lyr? {
         val r = lyrics(title, artist, album, durationSec)
