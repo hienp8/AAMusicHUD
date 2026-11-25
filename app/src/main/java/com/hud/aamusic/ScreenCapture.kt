@@ -198,32 +198,48 @@ object ScreenCapture {
         } catch (e: Exception) { }
     }
 
-    /** Làm trong suốt các điểm ảnh có màu gần với màu nền của hàng tương ứng trong khung hình gốc. */
-    private fun keyOut(bmp: Bitmap, full: Bitmap, bgx: Int, rowSrc: (Int) -> Int, sens: Int): Bitmap {
-        val out = bmp.copy(Bitmap.Config.ARGB_8888, true)
-        val w = out.width
-        val h = out.height
-        val px = IntArray(w * h)
-        out.getPixels(px, 0, w, 0, 0, w, h)
-        val lo = sens * 0.5f
-        val hi = sens * 2f
+    private fun chan(c: Int, shift: Int) = ((c shr shift) and 255).toFloat()
+
+    /** Làm nét (unsharp), tăng nhẹ tương phản và độ đậm màu; strength 0..100. Ảnh đầu ra đục (không trong suốt). */
+    private fun enhance(bmp: Bitmap, strength: Int): Bitmap {
+        if (strength <= 0) return bmp
+        val w = bmp.width
+        val h = bmp.height
+        val src = IntArray(w * h)
+        bmp.getPixels(src, 0, w, 0, 0, w, h)
+        val out = IntArray(w * h)
+        val a = strength / 100f * 0.9f
+        val k = 1f + strength / 100f * 0.18f
+        val sat = 1f + strength / 100f * 0.2f
         for (y in 0 until h) {
-            val sy = rowSrc(y).coerceIn(0, full.height - 1)
-            val b = full.getPixel(bgx.coerceIn(0, full.width - 1), sy)
-            val br = (b shr 16) and 255
-            val bg = (b shr 8) and 255
-            val bb = b and 255
             for (x in 0 until w) {
-                val c = px[y * w + x]
-                val a0 = (c ushr 24) and 255
-                if (a0 == 0) continue
-                val d = abs(((c shr 16) and 255) - br) + abs(((c shr 8) and 255) - bg) + abs((c and 255) - bb)
-                val f = ((d - lo) / (hi - lo)).coerceIn(0f, 1f)
-                px[y * w + x] = ((a0 * f).toInt() shl 24) or (c and 0x00FFFFFF)
+                val i = y * w + x
+                val c = src[i]
+                if (x == 0 || y == 0 || x == w - 1 || y == h - 1) {
+                    out[i] = c or (0xFF shl 24)
+                    continue
+                }
+                val u = src[i - w]
+                val d = src[i + w]
+                val l = src[i - 1]
+                val r = src[i + 1]
+                var rr = chan(c, 16) * (1f + 4f * a) - a * (chan(u, 16) + chan(d, 16) + chan(l, 16) + chan(r, 16))
+                var gg = chan(c, 8) * (1f + 4f * a) - a * (chan(u, 8) + chan(d, 8) + chan(l, 8) + chan(r, 8))
+                var bb = chan(c, 0) * (1f + 4f * a) - a * (chan(u, 0) + chan(d, 0) + chan(l, 0) + chan(r, 0))
+                rr = (rr - 128f) * k + 128f
+                gg = (gg - 128f) * k + 128f
+                bb = (bb - 128f) * k + 128f
+                val lum = 0.299f * rr + 0.587f * gg + 0.114f * bb
+                rr = lum + (rr - lum) * sat
+                gg = lum + (gg - lum) * sat
+                bb = lum + (bb - lum) * sat
+                out[i] = (0xFF shl 24) or
+                    (rr.toInt().coerceIn(0, 255) shl 16) or (gg.toInt().coerceIn(0, 255) shl 8) or bb.toInt().coerceIn(0, 255)
             }
         }
-        out.setPixels(px, 0, w, 0, 0, w, h)
-        return out
+        val res = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        res.setPixels(out, 0, w, 0, 0, w, h)
+        return res
     }
 
     private fun grab(r: ImageReader, w: Int, h: Int) {
@@ -253,6 +269,7 @@ object ScreenCapture {
                 val k = 512f / side
                 val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
                 val cv = Canvas(out)
+                cv.drawColor(0xFF0B0D12.toInt())
                 val sy0 = top.coerceAtLeast(0)
                 val sy1 = (top + side).coerceAtMost(h)
                 if (sy1 > sy0) {
@@ -274,10 +291,8 @@ object ScreenCapture {
                 rowMap = { y -> y0 + y * ch / 512 }
                 art0 = Bitmap.createScaledBitmap(Bitmap.createBitmap(full, x0, y0, cw, ch), 512, 512, true)
             }
-            // Nền trong suốt: xoá màu nền của app (ước lượng theo từng hàng) để hình rõ hơn trên xe
-            val finalArt: Bitmap = if (prefs.getBoolean("cap_key", true)) {
-                keyOut(art0, full, (w * 0.05f).toInt(), rowMap, prefs.getInt("cap_key_s", 40))
-            } else art0
+            // Giữ nền đục như hình chụp; chỉ làm nét và tăng tương phản/màu để dễ nhìn trên màn hình xe
+            val finalArt: Bitmap = enhance(art0, prefs.getInt("cap_sharp", 50))
             val small = Bitmap.createScaledBitmap(full, w / 2, h / 2, true)
             main.post {
                 preview = small

@@ -248,8 +248,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capY by remember { mutableStateOf(prefs.getInt("cap_y", 8)) }
     var capS by remember { mutableStateOf(prefs.getInt("cap_size", 92)) }
     var capBand by remember { mutableStateOf(prefs.getBoolean("cap_band", true)) }
-    var capKey by remember { mutableStateOf(prefs.getBoolean("cap_key", true)) }
-    var capKeyS by remember { mutableStateOf(prefs.getInt("cap_key_s", 40)) }
+    var capSharp by remember { mutableStateOf(prefs.getInt("cap_sharp", 50)) }
     var dimAuto by remember { mutableStateOf(prefs.getBoolean("dim_auto", false)) }
     var keepOn by remember { mutableStateOf(prefs.getBoolean("keep_on_screen_off", true)) }
     var fxOff by remember { mutableStateOf(prefs.getBoolean("fx_off_in_car", true)) }
@@ -357,10 +356,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     CropSlider("Trên", capY, 0, 100) { capY = it; putInt("cap_y", it) }
                     CropSlider("Cỡ", capS, 20, 100) { capS = it; putInt("cap_size", it) }
                 }
-                CheckRow("Nền trong suốt (xoá màu nền của app để hình rõ hơn trên xe)", capKey) {
-                    capKey = it; prefs.edit().putBoolean("cap_key", it).apply()
-                }
-                if (capKey) CropSlider("Độ nhạy", capKeyS, 10, 120) { capKeyS = it; putInt("cap_key_s", it) }
+                CropSlider("Độ nét và tương phản", capSharp, 0, 100) { capSharp = it; putInt("cap_sharp", it) }
                 CheckRow("Khi tắt màn hình: tự bật lại ở chế độ đèn nền tắt để hình trên xe không bị đứng (máy vẫn khoá)", keepOn) {
                     keepOn = it; prefs.edit().putBoolean("keep_on_screen_off", it).apply()
                 }
