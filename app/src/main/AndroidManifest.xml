@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <queries>
+        <package android:name="com.google.android.apps.youtube.music" />
+        <package android:name="com.zing.mp3" />
+        <package android:name="ht.nct" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
