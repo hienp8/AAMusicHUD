@@ -235,6 +235,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var aiModel by remember { mutableStateOf(prefs.getString("ai_model", "") ?: "") }
     var dsTest by remember { mutableStateOf("") }
     var gFirst by remember { mutableStateOf(prefs.getBoolean("name_google_first", false)) }
+    var jmTest by remember { mutableStateOf("") }
     var jamendoId by remember { mutableStateOf(prefs.getString("jamendo_id", "") ?: "") }
     var webSrc by remember { mutableStateOf(prefs.getBoolean("web_src", true)) }
     var streams by remember { mutableStateOf(prefs.getString("streams", "") ?: "") }
@@ -447,6 +448,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                     label = { Text("Jamendo Client ID (miễn phí tại developer.jamendo.com)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                SoftBtn("Kiểm tra Jamendo") {
+                    scope.launch {
+                        jmTest = "Đang kiểm tra..."
+                        jmTest = withContext(Dispatchers.IO) { Online.test() }
+                    }
+                }
+                if (jmTest.isNotEmpty()) Text(jmTest, fontSize = 12.sp, color = AccentA)
             }
 
             CSection("Giới thiệu ứng dụng (About)", icon = "info") {
@@ -1311,7 +1319,7 @@ private fun SectionTitle(icon: String, text: String, action: (@Composable () -> 
 }
 
 @Composable
-fun OnlineTab() {
+fun JamendoTab() {
     val scope = rememberCoroutineScope()
     val prefs = Engine.prefs
     var q by remember { mutableStateOf("") }
@@ -1381,12 +1389,6 @@ fun OnlineTab() {
                     "Cần Jamendo Client ID (miễn phí tại developer.jamendo.com): nhập ở Cài đặt > Nâng cao.",
                     color = AccentB, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp)
                 )
-            }
-        }
-        item {
-            Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Pill("Tất cả", true) { }
-                Pill("Jamendo · nhạc Creative Commons", false) { }
             }
         }
         if (hist.isNotEmpty()) {

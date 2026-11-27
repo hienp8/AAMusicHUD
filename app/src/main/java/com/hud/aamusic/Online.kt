@@ -48,15 +48,23 @@ object Online {
         val id = clientId()
         if (id.isEmpty()) return Pair(null, "Chưa nhập Jamendo Client ID (Cài đặt > Nâng cao)")
         val url = "https://api.jamendo.com/v3.0/tracks/?client_id=${URLEncoder.encode(id, "UTF-8")}&format=json&limit=30" +
-            "&audioformat=mp32&include=licenses$extra"
+            "&audioformat=mp32$extra"
         return try {
             val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 10000
             c.readTimeout = 15000
             c.setRequestProperty("User-Agent", "AAMusicHud/1.0")
             val code = c.responseCode
-            if (code !in 200..299) return Pair(null, "Jamendo: HTTP $code")
+            if (code !in 200..299) {
+                val body = try { c.errorStream?.bufferedReader()?.readText().orEmpty().take(150) } catch (e: Exception) { "" }
+                return Pair(null, "Jamendo: HTTP $code $body".trim())
+            }
             val o = JSONObject(c.inputStream.bufferedReader().readText())
+            // Jamendo trả HTTP 200 kèm trạng thái lỗi trong headers (vd. Client ID sai hoặc chưa được duyệt)
+            val hd = o.optJSONObject("headers")
+            if (hd != null && hd.optString("status") == "failed") {
+                return Pair(null, "Jamendo báo lỗi: ${hd.optString("error_message")} (mã ${hd.optInt("code")}). Kiểm tra Client ID tại developer.jamendo.com")
+            }
             val arr = o.optJSONArray("results") ?: return Pair(emptyList(), "Không có kết quả")
             val out = ArrayList<OnlineTrack>()
             for (i in 0 until arr.length()) {
@@ -72,6 +80,12 @@ object Online {
         } catch (e: Exception) {
             Pair(null, "Jamendo: lỗi ${e.javaClass.simpleName}")
         }
+    }
+
+    /** Kiểm tra kết nối Jamendo: trả về kết quả hoặc lý do lỗi. Gọi ngoài luồng chính. */
+    fun test(): String {
+        val (l, m) = popular()
+        return if (l != null && l.isNotEmpty()) "Kết nối Jamendo OK: ${l.size} bài" else m
     }
 
     fun toSong(t: OnlineTrack) = Song(
