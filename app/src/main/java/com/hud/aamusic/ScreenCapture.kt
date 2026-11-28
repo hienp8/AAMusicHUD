@@ -265,7 +265,9 @@ object ScreenCapture {
                 val rh = rw / 2
                 val ry = (h * prefs.getInt("cap_ry", 23) / 100f).toInt().coerceIn(0, (h - rh).coerceAtLeast(0))
                 val side = rw
-                val top = ry + rh / 2 - side / 2
+                // Vị trí dải trong ảnh vuông: 0 = sát mép trên, 50 = giữa, 100 = sát mép dưới
+                val bpos = prefs.getInt("cap_bpos", 50).coerceIn(0, 100)
+                val top = ry - (side - rh) * bpos / 100
                 val k = 512f / side
                 val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
                 val cv = Canvas(out)

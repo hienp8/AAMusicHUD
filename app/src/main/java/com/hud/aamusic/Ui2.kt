@@ -258,6 +258,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var capRx by remember { mutableStateOf(prefs.getInt("cap_rx", 26)) }
     var capRy by remember { mutableStateOf(prefs.getInt("cap_ry", 23)) }
     var capRw by remember { mutableStateOf(prefs.getInt("cap_rw", 70)) }
+    var capBpos by remember { mutableStateOf(prefs.getInt("cap_bpos", 50)) }
     var pickingApp by remember { mutableStateOf(false) }
     var rootInfo by remember { mutableStateOf("") }
 
@@ -268,9 +269,9 @@ fun SettingsScreen(onBack: () -> Unit) {
         prefs.edit().putString("ai_url", url).putString("ai_model", model).apply()
     }
     fun setWyn() {
-        capX = 26; capY = 14; capS = 72; capRx = 26; capRy = 23; capRw = 70
+        capX = 26; capY = 14; capS = 72; capRx = 26; capRy = 23; capRw = 70; capBpos = 50
         prefs.edit().putInt("cap_x", 26).putInt("cap_y", 14).putInt("cap_size", 72)
-            .putInt("cap_rx", 26).putInt("cap_ry", 23).putInt("cap_rw", 70).apply()
+            .putInt("cap_rx", 26).putInt("cap_ry", 23).putInt("cap_rw", 70).putInt("cap_bpos", 50).apply()
     }
 
     LaunchedEffect(Unit) {
@@ -351,6 +352,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                     CropSlider("Trái", capRx, 0, 100) { capRx = it; putInt("cap_rx", it) }
                     CropSlider("Trên", capRy, 0, 100) { capRy = it; putInt("cap_ry", it) }
                     CropSlider("Rộng", capRw, 20, 100) { capRw = it; putInt("cap_rw", it) }
+                    CropSlider("Dải trong ảnh vuông", capBpos, 0, 100) { capBpos = it; putInt("cap_bpos", it) }
+                    Text(
+                        "Vị trí lên xuống của dải bên trong hình vuông gửi lên xe: 0% = dải sát mép trên, 50% = ở giữa, " +
+                            "100% = sát mép dưới. Kéo để phần cần xem (vd. biển báo tốc độ) không bị cắt.",
+                        fontSize = 11.sp, color = Dim
+                    )
                 } else {
                     Text("Ảnh vuông (không dùng dải ngang):", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     CropSlider("Trái", capX, 0, 100) { capX = it; putInt("cap_x", it) }
@@ -375,7 +382,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     SoftBtn("Dừng") { ScreenCapture.manual = false; ScreenCapture.stop() }
                 }
                 Text(Diag.cap, fontSize = 12.sp, color = AccentA)
-                CapPreview(capX, capY, capS, capBand, capRx, capRy, capRw)
+                CapPreview(capX, capY, capS, capBand, capRx, capRy, capRw, capBpos)
             }
 
             CSection("Radio online", icon = "radio") {
@@ -970,7 +977,7 @@ fun CropSlider(label: String, value: Int, min: Int, max: Int, onChange: (Int) ->
 
 /** Hình chụp mới nhất, khung vuông (cam), khung dải ngang (hồng) và hai kiểu hiển thị trên xe. */
 @Composable
-fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: Int) {
+fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: Int, bpos: Int) {
     val bmp = ScreenCapture.preview
     if (bmp == null) {
         Text("Chưa có hình. Bấm \"Thử chụp\" để xem trước.", color = Dim, fontSize = 12.sp)
@@ -986,7 +993,7 @@ fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: I
                         val bh = bw / 2f
                         val bx = (w * rx / 100f).coerceIn(0f, (w - bw).coerceAtLeast(0f))
                         val by = (h * ry / 100f).coerceIn(0f, (h - bh).coerceAtLeast(0f))
-                        val sy = by + bh / 2f - bw / 2f   // hình vuông gửi lên xe, dải nằm đúng giữa
+                        val sy = by - (bw - bh) * bpos / 100f   // hình vuông gửi lên xe; dải nằm ở vị trí bpos% bên trong
                         drawRect(AccentA, Offset(bx, sy), Size(bw, bw), style = Stroke(width = 3.dp.toPx()))
                         drawRect(AccentB, Offset(bx, by), Size(bw, bh), style = Stroke(width = 3.dp.toPx()))
                     } else {
@@ -1281,17 +1288,35 @@ private fun SmallIconBtn(icon: String, onClick: () -> Unit) {
         Modifier.size(46.dp).pressable(onClick).clip(RoundedCornerShape(14.dp)).background(Color(0xFF161B26))
             .border(1.dp, Color(0xFF232A38), RoundedCornerShape(14.dp)),
         contentAlignment = Alignment.Center
-    ) { Ic(icon, Color.White, 20.dp) }
+    ) {
+        if (icon == "…") Text("…", fontSize = 20.sp, color = AccentA)
+        else Ic(icon, if (icon == "check") AccentA else Color.White, 20.dp)
+    }
 }
 
 @Composable
-private fun OnlineRow(n: Int, t: OnlineTrack, onPlay: () -> Unit, onQueue: () -> Unit, onDownload: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("$n", color = AccentA, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.width(34.dp))
-        RemoteImage(t.imageUrl, Modifier.size(58.dp))
+private fun OnlineRow(
+    n: Int, t: OnlineTrack, onPlay: () -> Unit, onQueue: () -> Unit, onDownload: () -> Unit,
+    queued: Boolean = false, downloading: Boolean = false, downloaded: Boolean = false
+) {
+    val playing = Engine.current?.id == "O:${t.id}"
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(14.dp))
+            .then(if (playing) Modifier.background(Color(0x1AFF7A18)) else Modifier)
+            .padding(horizontal = 4.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "$n", color = if (n == 1) AccentA else Dim, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center, modifier = Modifier.width(34.dp)
+        )
+        RemoteImage(t.imageUrl, Modifier.size(56.dp))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                color = if (playing) AccentA else Color.White
+            )
             Row {
                 Text(t.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Dim, fontSize = 13.sp, modifier = Modifier.weight(1f, fill = false))
                 Text("  ·  Jamendo", color = AccentB, fontSize = 13.sp, maxLines = 1)
@@ -1300,10 +1325,10 @@ private fun OnlineRow(n: Int, t: OnlineTrack, onPlay: () -> Unit, onQueue: () ->
         Spacer(Modifier.width(6.dp))
         SmallIconBtn("play", onPlay)
         Spacer(Modifier.width(6.dp))
-        SmallIconBtn("listplus", onQueue)
+        SmallIconBtn(if (queued) "check" else "listplus", onQueue)
         if (t.downloadAllowed) {
             Spacer(Modifier.width(6.dp))
-            SmallIconBtn("download", onDownload)
+            SmallIconBtn(if (downloading) "…" else if (downloaded) "check" else "download", onDownload)
         }
     }
 }
@@ -1329,6 +1354,9 @@ fun JamendoTab() {
     var msg by remember { mutableStateOf("") }
     var hist by remember { mutableStateOf((prefs.getString("online_hist", "") ?: "").split("\n").filter { it.isNotBlank() }) }
     var dlFor by remember { mutableStateOf<OnlineTrack?>(null) }
+    var queuedIds by remember { mutableStateOf(setOf<String>()) }
+    var busyIds by remember { mutableStateOf(setOf<String>()) }
+    var doneIds by remember { mutableStateOf(setOf<String>()) }
     val hasKey = prefs.getString("jamendo_id", "").orEmpty().isNotBlank()
 
     fun load(label: String, call: () -> Pair<List<OnlineTrack>?, String>) {
@@ -1362,6 +1390,7 @@ fun JamendoTab() {
         val sg = Online.toSong(t)
         Engine.registerOnline(sg)
         Engine.addToQueue(sg)
+        queuedIds = queuedIds + t.id
         msg = "Đã thêm vào hàng đợi: ${t.title}"
     }
 
@@ -1372,6 +1401,11 @@ fun JamendoTab() {
                     q, { q = it }, singleLine = true,
                     placeholder = { Text("Tìm bài hát, nghệ sĩ trên Jamendo...", color = Dim, maxLines = 1) },
                     leadingIcon = { Ic("search", Dim, 24.dp) },
+                    trailingIcon = {
+                        if (q.isNotEmpty()) {
+                            Box(Modifier.pressable { q = ""; results = emptyList(); msg = "" }.padding(8.dp)) { Ic("x", Dim, 20.dp) }
+                        }
+                    },
                     shape = RoundedCornerShape(28.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = AccentA, unfocusedBorderColor = Color(0xFF2A3140),
@@ -1411,7 +1445,10 @@ fun JamendoTab() {
             }
         }
         if (msg.isNotEmpty()) {
-            item { Text(msg, color = AccentA, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
+            item {
+                val isErr = msg.contains("lỗi", true) || msg.startsWith("Jamendo") || msg.startsWith("Cần")
+                Text(msg, color = if (isErr) AccentB else AccentA, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+            }
         }
         if (results.isNotEmpty()) {
             item {
@@ -1420,7 +1457,7 @@ fun JamendoTab() {
                 }
             }
             itemsIndexed(results) { i, t ->
-                OnlineRow(i + 1, t, { playList(results, i) }, { queue(t) }, { dlFor = t })
+                OnlineRow(i + 1, t, { playList(results, i) }, { queue(t) }, { dlFor = t }, t.id in queuedIds, t.id in busyIds, t.id in doneIds)
             }
         } else {
             item { SectionTitle("listmusic", "THỂ LOẠI GỢI Ý") }
@@ -1454,7 +1491,7 @@ fun JamendoTab() {
                     }
                 }
                 itemsIndexed(chart) { i, t ->
-                    OnlineRow(i + 1, t, { playList(chart, i) }, { queue(t) }, { dlFor = t })
+                    OnlineRow(i + 1, t, { playList(chart, i) }, { queue(t) }, { dlFor = t }, t.id in queuedIds, t.id in busyIds, t.id in doneIds)
                 }
             }
         }
@@ -1474,7 +1511,10 @@ fun JamendoTab() {
                             dlFor = null
                             msg = "Đang tải ${d.title}..."
                             scope.launch(Dispatchers.IO) {
+                                busyIds = busyIds + d.id
                                 val err = Online.download(d, fmt) { m -> msg = m }
+                                busyIds = busyIds - d.id
+                                if (err == null) doneIds = doneIds + d.id
                                 msg = err ?: "Đã tải xong: ${d.title}. Bấm nút làm mới ở đầu màn hình nếu chưa thấy trong thư viện."
                             }
                         }
