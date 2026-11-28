@@ -452,7 +452,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text("Nhạc online (Jamendo, nhạc Creative Commons)", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
                 OutlinedTextField(
                     jamendoId, { jamendoId = it; prefs.edit().putString("jamendo_id", it.trim()).apply() },
-                    label = { Text("Jamendo Client ID (miễn phí tại developer.jamendo.com)") }, singleLine = true,
+                    label = { Text("Jamendo Client ID (miễn phí tại devportal.jamendo.com)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 SoftBtn("Kiểm tra Jamendo") {
@@ -1420,7 +1420,7 @@ fun JamendoTab() {
         if (!hasKey) {
             item {
                 Text(
-                    "Cần Jamendo Client ID (miễn phí tại developer.jamendo.com): nhập ở Cài đặt > Nâng cao.",
+                    "Cần Jamendo Client ID (miễn phí tại devportal.jamendo.com): nhập ở Cài đặt > Nâng cao.",
                     color = AccentB, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp)
                 )
             }

@@ -63,7 +63,11 @@ object Online {
             // Jamendo trả HTTP 200 kèm trạng thái lỗi trong headers (vd. Client ID sai hoặc chưa được duyệt)
             val hd = o.optJSONObject("headers")
             if (hd != null && hd.optString("status") == "failed") {
-                return Pair(null, "Jamendo báo lỗi: ${hd.optString("error_message")} (mã ${hd.optInt("code")}). Kiểm tra Client ID tại developer.jamendo.com")
+                val code = hd.optInt("code")
+                val hint = if (code == 11)
+                    "Ứng dụng gắn với Client ID này đã bị Jamendo tạm khoá. Tạo ứng dụng mới (Client ID riêng của bạn) tại devportal.jamendo.com rồi nhập lại, hoặc liên hệ Jamendo."
+                else "Kiểm tra Client ID tại devportal.jamendo.com"
+                return Pair(null, "Jamendo báo lỗi: ${hd.optString("error_message")} (mã $code). $hint")
             }
             val arr = o.optJSONArray("results") ?: return Pair(emptyList(), "Không có kết quả")
             val out = ArrayList<OnlineTrack>()
