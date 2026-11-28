@@ -465,9 +465,10 @@ fun ScrollList(
     letters: List<Pair<Char, Int>> = emptyList(),
     bottom: Dp = 12.dp,
     spacing: Dp = 0.dp,
+    initialIndex: Int = -1,
     content: LazyListScope.() -> Unit
 ) {
-    val state = rememberLazyListState()
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = if (initialIndex > 2) initialIndex - 2 else 0)
     val showLetters = letters.size >= 3
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -602,13 +603,13 @@ fun RootBody() {
                         3 -> SettingsScreen { screen = 0 }
                         else -> QueueScreen { screen = 0 }
                     }
+                    if (LibraryCheck.visible) ScanScreen()
                 }
                 if (screen != 0 && Engine.current != null) {
                     Box(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) { MiniPlayer { screen = 0 } }
                 }
                 BottomNav(screen) { screen = it }
             }
-            if (LibraryCheck.visible) ScanScreen()
             if (hud) LockLyricsScreen(onClose = { hud = false }, onOpenApp = { hud = false })
         }
     }
@@ -889,7 +890,8 @@ fun SongList(list: List<Song>, header: Boolean, playlist: String? = null, alpha:
     }
     val shift = if (header) 1 else 0
     val letters = if (alpha) alphaIndex(list.map { Engine.title(it) }).map { it.first to it.second + shift } else emptyList()
-    ScrollList(letters = letters) {
+    val startIdx = list.indexOfFirst { it.id == Engine.current?.id }
+    ScrollList(letters = letters, initialIndex = if (startIdx >= 0) startIdx + shift else -1) {
         if (header) {
             item {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -899,6 +901,30 @@ fun SongList(list: List<Song>, header: Boolean, playlist: String? = null, alpha:
             }
         }
         itemsIndexed(list, key = { _, s -> s.id }) { i, s -> SongRow(s, playlist) { Engine.play(list, i) } }
+    }
+}
+
+/** Menu 3 chấm của bài hát (dùng ở danh sách và ở trình phát). */
+@Composable
+fun SongMenu(s: Song, playlist: String?, expanded: Boolean, onDismiss: () -> Unit) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+            DropdownMenuItem(
+                text = { Text(if (Lists.isFav(s)) "♥ Bỏ yêu thích" else "♡ Thêm vào yêu thích") },
+                onClick = { onDismiss(); Lists.toggleFav(s) }
+            )
+            DropdownMenuItem(text = { Text("▶ Phát tiếp theo") }, onClick = { onDismiss(); Engine.playNext(s) })
+            DropdownMenuItem(text = { Text("☰ Thêm vào hàng đợi") }, onClick = { onDismiss(); Engine.addToQueue(s) })
+            if (!s.streaming) {
+                DropdownMenuItem(text = { Text("＋ Thêm vào playlist") }, onClick = { onDismiss(); Lists.pickFor = s })
+            }
+            if (playlist != null) {
+                DropdownMenuItem(text = { Text("➖ Bỏ khỏi playlist này") }, onClick = { onDismiss(); Lists.removeFrom(playlist, s) })
+            }
+            if (!s.streaming) {
+                DropdownMenuItem(text = { Text("✏ Sửa thông tin / bìa / lời") }, onClick = { onDismiss(); Engine.editing = s })
+                DropdownMenuItem(text = { Text("🙈 Xóa khỏi danh sách") }, onClick = { onDismiss(); Lists.hide(s) })
+                DropdownMenuItem(text = { Text("🗑 Xóa file khỏi máy") }, onClick = { onDismiss(); Lists.confirmDelete = s })
+            }
     }
 }
 
@@ -928,25 +954,7 @@ fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
         }
         Box {
             Box(Modifier.pressable { menu = true }.padding(horizontal = 5.dp, vertical = 8.dp)) { Ic("more", Dim, 22.dp) }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(
-                    text = { Text(if (Lists.isFav(s)) "♥ Bỏ yêu thích" else "♡ Thêm vào yêu thích") },
-                    onClick = { menu = false; Lists.toggleFav(s) }
-                )
-                DropdownMenuItem(text = { Text("▶ Phát tiếp theo") }, onClick = { menu = false; Engine.playNext(s) })
-                DropdownMenuItem(text = { Text("☰ Thêm vào hàng đợi") }, onClick = { menu = false; Engine.addToQueue(s) })
-                if (!s.streaming) {
-                    DropdownMenuItem(text = { Text("＋ Thêm vào playlist") }, onClick = { menu = false; Lists.pickFor = s })
-                }
-                if (playlist != null) {
-                    DropdownMenuItem(text = { Text("➖ Bỏ khỏi playlist này") }, onClick = { menu = false; Lists.removeFrom(playlist, s) })
-                }
-                if (!s.streaming) {
-                    DropdownMenuItem(text = { Text("✏ Sửa thông tin / bìa / lời") }, onClick = { menu = false; Engine.editing = s })
-                    DropdownMenuItem(text = { Text("🙈 Xóa khỏi danh sách") }, onClick = { menu = false; Lists.hide(s) })
-                    DropdownMenuItem(text = { Text("🗑 Xóa file khỏi máy") }, onClick = { menu = false; Lists.confirmDelete = s })
-                }
-            }
+            SongMenu(s, playlist, menu) { menu = false }
         }
     }
 }
@@ -957,6 +965,7 @@ fun SongRow(s: Song, playlist: String? = null, onClick: () -> Unit) {
 fun NowPlayingScreen(onLibrary: () -> Unit, onHud: () -> Unit) {
     val s = Engine.current
     var showLyrics by remember { mutableStateOf(false) }
+    var songMenu by remember { mutableStateOf(false) }
     val hasLyrics = Engine.lyricLines.isNotEmpty() || Engine.plainLyrics.isNotEmpty()
     LaunchedEffect(Unit) {
         while (true) {
@@ -1068,10 +1077,19 @@ fun NowPlayingScreen(onLibrary: () -> Unit, onHud: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 val fav = Lists.isFav(s)
                 Box(
-                    Modifier.size(54.dp).pressable { Lists.toggleFav(s) }.clip(RoundedCornerShape(18.dp))
-                        .background(Color(0xFF111620)).border(1.dp, Color(0xFF2A3140), RoundedCornerShape(18.dp)),
+                    Modifier.size(48.dp).pressable { Lists.toggleFav(s) }.clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF111620)).border(1.dp, Color(0xFF2A3140), RoundedCornerShape(16.dp)),
                     contentAlignment = Alignment.Center
-                ) { Ic("heart", if (fav) AccentB else Color.White, 26.dp, filled = fav) }
+                ) { Ic("heart", if (fav) AccentB else Color.White, 24.dp, filled = fav) }
+                Spacer(Modifier.width(8.dp))
+                Box {
+                    Box(
+                        Modifier.size(48.dp).pressable { songMenu = true }.clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFF111620)).border(1.dp, Color(0xFF2A3140), RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center
+                    ) { Ic("more", Color.White, 24.dp) }
+                    SongMenu(s, null, songMenu) { songMenu = false }
+                }
             }
             val dur = max(Engine.durationMs, 1L)
             Slider(
@@ -1297,7 +1315,7 @@ fun SyncEditor() {
             fontSize = 12.sp, color = Dim, modifier = Modifier.padding(vertical = 6.dp)
         )
         if (Engine.syncMsg.isNotEmpty()) Text(Engine.syncMsg, color = AccentA, fontSize = 12.sp)
-        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 90.dp)) {
             itemsIndexed(rows) { i, r ->
                 val isCur = i == cursor
                 Row(
@@ -1417,7 +1435,7 @@ fun LyricSyncPanel(song: Song, initial: String, onApply: (String) -> Unit, onClo
             fontSize = 12.sp, color = Dim, modifier = Modifier.padding(bottom = 4.dp)
         )
         if (msg.isNotEmpty()) Text(msg, color = AccentB, fontSize = 12.sp)
-        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 90.dp)) {
             itemsIndexed(rows) { i, r ->
                 val isCur = i == cursor
                 Row(

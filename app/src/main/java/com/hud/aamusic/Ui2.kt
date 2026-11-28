@@ -695,6 +695,7 @@ fun TagEditor(s: Song) {
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
+            Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Sửa thông tin", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -756,7 +757,7 @@ fun TagEditor(s: Song) {
                         onClose = { syncOpen = false }
                     )
                 } else Column(
-                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 90.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (!Tags.canWrite()) {
@@ -1025,6 +1026,10 @@ fun CapPreview(xp: Int, yp: Int, sp: Int, band: Boolean, rx: Int, ry: Int, rw: I
                     }
                 }
             }
+            if (Engine.current != null) {
+                Box(Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 8.dp)) { MiniPlayer { } }
+            }
+            }
         }
     }
 }
@@ -1214,7 +1219,7 @@ fun QueueScreen(onBack: () -> Unit) {
         if (q.isEmpty()) {
             EmptyHint("Hàng đợi trống. Dùng menu ⋮ của bài để Phát tiếp theo hoặc Thêm vào hàng đợi.")
         } else {
-            ScrollList(bottom = 12.dp) {
+            ScrollList(bottom = 12.dp, initialIndex = order.indexOf(curIdx)) {
                 itemsIndexed(order) { k, i ->
                     val s = q.getOrNull(i) ?: return@itemsIndexed
                     val isCur = i == curIdx
